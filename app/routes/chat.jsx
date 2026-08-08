@@ -6,8 +6,14 @@ import MCPClient from "../mcp-client";
 import { saveMessage, getConversationHistory, storeCustomerAccountUrls, getCustomerAccountUrls as getCustomerAccountUrlsFromDb } from "../db.server";
 import AppConfig from "../services/config.server";
 import { createSseStream } from "../services/streaming.server";
-import { createClaudeService } from "../services/claude.server";
+
 import { createToolService } from "../services/tool.server";
+// Replace Claude service import with DeepSeek
+import { createDeepseekService } from "../services/deepseek.server";
+
+// Inside handleChatSession:
+// const claudeService = createClaudeService();
+
 
 
 /**
@@ -113,6 +119,7 @@ async function handleChatRequest(request) {
  * @param {Object} params.stream - Stream manager for sending responses
  */
 async function handleChatSession({
+  
   request,
   userMessage,
   conversationId,
@@ -120,7 +127,7 @@ async function handleChatSession({
   stream
 }) {
   // Initialize services
-  const claudeService = createClaudeService();
+ const deepseekService = createDeepseekService();
   const toolService = createToolService();
 
   // Initialize MCP client
@@ -177,93 +184,51 @@ async function handleChatSession({
     });
 
     // Execute the conversation stream
-    let finalMessage = { role: 'user', content: userMessage };
+    // Execute the conversation once with DeepSeek
+const finalMessage = await deepseekService.streamConversation(
+  {
+    messages: conversationHistory,
+    promptType,
+    tools: mcpClient.tools, // not used in minimal DeepSeek version
+  },
+  {
+    // Handle text chunks
+    onText: (textDelta) => {
+      stream.sendMessage({
+        type: "chunk",
+        chunk: textDelta,
+      });
+    },
 
-    while (finalMessage.stop_reason !== "end_turn") {
-      finalMessage = await claudeService.streamConversation(
-        {
-          messages: conversationHistory,
-          promptType,
-          tools: mcpClient.tools
-        },
-        {
-          // Handle text chunks
-          onText: (textDelta) => {
-            stream.sendMessage({
-              type: 'chunk',
-              chunk: textDelta
-            });
-          },
+    // Handle complete messages
+    onMessage: (message) => {
+      conversationHistory.push({
+        role: message.role,
+        content: message.content,
+      });
 
-          // Handle complete messages
-          onMessage: (message) => {
-            conversationHistory.push({
-              role: message.role,
-              content: message.content
-            });
-
-            saveMessage(conversationId, message.role, JSON.stringify(message.content))
-              .catch((error) => {
-                console.error("Error saving message to database:", error);
-              });
-
-            // Send a completion message
-            stream.sendMessage({ type: 'message_complete' });
-          },
-
-          // Handle tool use requests
-          onToolUse: async (content) => {
-            const toolName = content.name;
-            const toolArgs = content.input;
-            const toolUseId = content.id;
-
-            const toolUseMessage = `Calling tool: ${toolName} with arguments: ${JSON.stringify(toolArgs)}`;
-
-            stream.sendMessage({
-              type: 'tool_use',
-              tool_use_message: toolUseMessage
-            });
-
-            // Call the tool
-            const toolUseResponse = await mcpClient.callTool(toolName, toolArgs);
-
-            // Handle tool response based on success/error
-            if (toolUseResponse.error) {
-              await toolService.handleToolError(
-                toolUseResponse,
-                toolName,
-                toolUseId,
-                conversationHistory,
-                stream.sendMessage,
-                conversationId
-              );
-            } else {
-              await toolService.handleToolSuccess(
-                toolUseResponse,
-                toolName,
-                toolUseId,
-                conversationHistory,
-                productsToDisplay,
-                conversationId
-              );
-            }
-
-            // Signal new message to client
-            stream.sendMessage({ type: 'new_message' });
-          },
-
-          // Handle content block completion
-          onContentBlock: (contentBlock) => {
-            if (contentBlock.type === 'text') {
-              stream.sendMessage({
-                type: 'content_block_complete',
-                content_block: contentBlock
-              });
-            }
-          }
+      saveMessage(conversationId, message.role, JSON.stringify(message.content)).catch(
+        (error) => {
+          console.error("Error saving message to database:", error);
         }
       );
-    }
+
+      // Send a completion message
+      stream.sendMessage({ type: "message_complete" });
+    },
+  }
+);
+
+// Signal end of turn
+stream.sendMessage({ type: "end_turn" });
+
+// Send product results if available (tools not wired yet, so probably empty)
+if (productsToDisplay.length > 0) {
+  stream.sendMessage({
+    type: "product_results",
+    products: productsToDisplay,
+  });
+}
 
     // Signal end of turn
     stream.sendMessage({ type: 'end_turn' });

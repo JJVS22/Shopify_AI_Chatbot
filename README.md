@@ -65,3 +65,4 @@ Follow standard Shopify app deployment procedures as outlined in the [Shopify do
 
 ## Contributing
 We appreciate your interest in contributing to this project. As this is an example repository intended for educational and reference purposes, we are not accepting contributions.
+#Shopify_AI_Chatbot

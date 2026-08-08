@@ -32,17 +32,17 @@
     "@shopify/app-bridge-react": "^4.1.6",
     "@shopify/shopify-app-react-router": "^1.0.0",
     "@shopify/shopify-app-session-storage-prisma": "^7.0.0",
+    "dotenv": "^16.3.1",
     "isbot": "^5.1.0",
+    "openai": "^7.4.0",
     "prisma": "^6.2.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router": "^7.9.1",
-    "vite-tsconfig-paths": "^5.0.1",
-    "@anthropic-ai/sdk": "^0.40.0",
-    "dotenv": "^16.3.1"
+    "vite-tsconfig-paths": "^5.0.1"
   },
   "devDependencies": {
-    "@shopify/api-codegen-preset": "^1.1.1",
+    "@shopify/api-codegen-preset": "^2.0.1",
     "@shopify/polaris-types": "^1.0.0",
     "@types/eslint": "^9.6.1",
     "@types/node": "^22.2.0",
@@ -78,5 +78,13 @@
     "@graphql-codegen/typescript-operations": "4.5.0",
     "minimatch": "9.0.5"
   },
-  "author": "siddhantbajaj"
+  "author": "siddhantbajaj",
+  "allowScripts": {
+    "@prisma/client@6.19.1": true,
+    "unrs-resolver@1.7.2": true,
+    "prisma@6.19.3": true,
+    "esbuild@0.25.3": true,
+    "@prisma/engines@6.19.3": true,
+    "@parcel/watcher@2.6.0": true
+  }
 }
