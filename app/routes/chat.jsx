@@ -1,26 +1,20 @@
 /**
  * Chat API Route
- * Handles chat interactions with Claude API and tools
+ * Handles chat interactions with DeepSeek API and MCP tools
  */
 import MCPClient from "../mcp-client";
 import { saveMessage, getConversationHistory, storeCustomerAccountUrls, getCustomerAccountUrls as getCustomerAccountUrlsFromDb } from "../db.server";
 import AppConfig from "../services/config.server";
 import { createSseStream } from "../services/streaming.server";
-
 import { createToolService } from "../services/tool.server";
-// Replace Claude service import with DeepSeek
-import { createDeepseekService } from "../services/deepseek.server";
+import process from "node:process";
+import {
+  createLlmProvider,
+  getTryonOpenAiTools,
+} from "../services/providers/index";
+import { handleTryonToolCall, isTryonTool } from "../services/tryon.server";
 
-// Inside handleChatSession:
-// const claudeService = createClaudeService();
-
-
-
-/**
- * Rract Router loader function for handling GET requests
- */
 export async function loader({ request }) {
-  // Handle OPTIONS requests (CORS preflight)
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
@@ -30,51 +24,31 @@ export async function loader({ request }) {
 
   const url = new URL(request.url);
 
-  // Handle history fetch requests - matches /chat?history=true&conversation_id=XYZ
   if (url.searchParams.has('history') && url.searchParams.has('conversation_id')) {
     return handleHistoryRequest(request, url.searchParams.get('conversation_id'));
   }
 
-  // Handle SSE requests
   if (!url.searchParams.has('history') && request.headers.get("Accept") === "text/event-stream") {
     return handleChatRequest(request);
   }
 
-  // API-only: reject all other requests
   return new Response(JSON.stringify({ error: AppConfig.errorMessages.apiUnsupported }), { status: 400, headers: getCorsHeaders(request) });
 }
 
-/**
- * React Router action function for handling POST requests
- */
 export async function action({ request }) {
   return handleChatRequest(request);
 }
 
-/**
- * Handle history fetch requests
- * @param {Request} request - The request object
- * @param {string} conversationId - The conversation ID
- * @returns {Response} JSON response with chat history
- */
 async function handleHistoryRequest(request, conversationId) {
   const messages = await getConversationHistory(conversationId);
-
   return new Response(JSON.stringify({ messages }), { headers: getCorsHeaders(request) });
 }
 
-/**
- * Handle chat requests (both GET and POST)
- * @param {Request} request - The request object
- * @returns {Response} Server-sent events stream
- */
 async function handleChatRequest(request) {
   try {
-    // Get message data from request body
     const body = await request.json();
     const userMessage = body.message;
 
-    // Validate required message
     if (!userMessage) {
       return new Response(
         JSON.stringify({ error: AppConfig.errorMessages.missingMessage }),
@@ -82,11 +56,9 @@ async function handleChatRequest(request) {
       );
     }
 
-    // Generate or use existing conversation ID
     const conversationId = body.conversation_id || Date.now().toString();
     const promptType = body.prompt_type || AppConfig.api.defaultPromptType;
 
-    // Create a stream for the response
     const responseStream = createSseStream(async (stream) => {
       await handleChatSession({
         request,
@@ -109,31 +81,20 @@ async function handleChatRequest(request) {
   }
 }
 
-/**
- * Handle a complete chat session
- * @param {Object} params - Session parameters
- * @param {Request} params.request - The request object
- * @param {string} params.userMessage - The user's message
- * @param {string} params.conversationId - The conversation ID
- * @param {string} params.promptType - The prompt type
- * @param {Object} params.stream - Stream manager for sending responses
- */
 async function handleChatSession({
-  
   request,
   userMessage,
   conversationId,
   promptType,
   stream
 }) {
-  // Initialize services
- const deepseekService = createDeepseekService();
+  const deepseekService = createLlmProvider();
   const toolService = createToolService();
 
-  // Initialize MCP client
   const shopId = request.headers.get("X-Shopify-Shop-Id");
   const shopDomain = request.headers.get("Origin");
-  const { mcpApiUrl } = await getCustomerAccountUrls(shopDomain, conversationId);
+  const customerUrls = await getCustomerAccountUrls(shopDomain, conversationId);
+  const mcpApiUrl = customerUrls?.mcpApiUrl;
 
   const mcpClient = new MCPClient(
     shopDomain,
@@ -143,124 +104,223 @@ async function handleChatSession({
   );
 
   try {
-    // Send conversation ID to client
     stream.sendMessage({ type: 'id', conversation_id: conversationId });
 
-    // Connect to MCP servers and get available tools
-    let storefrontMcpTools = [], customerMcpTools = [];
-
     try {
-      storefrontMcpTools = await mcpClient.connectToStorefrontServer();
-      customerMcpTools = await mcpClient.connectToCustomerServer();
-
-      console.log(`Connected to MCP with ${storefrontMcpTools.length} tools`);
-      console.log(`Connected to customer MCP with ${customerMcpTools.length} tools`);
+      await mcpClient.connectToStorefrontServer();
+      await mcpClient.connectToCustomerServer();
+      console.log(`[MCP] Connected with ${mcpClient.tools.length} total tools`);
+      if (mcpClient.tools.length > 0) {
+        console.log(`[MCP] Tool names:`, mcpClient.tools.map(t => t.name).join(', '));
+      } else {
+        console.warn(`[MCP] WARNING: 0 tools loaded — tool calling will not work!`);
+      }
     } catch (error) {
-      console.warn('Failed to connect to MCP servers, continuing without tools:', error.message);
+      console.warn('[MCP] Failed to connect to MCP servers, continuing without tools:', error.message);
     }
 
-    // Prepare conversation state
-    let conversationHistory = [];
     let productsToDisplay = [];
 
-    // Save user message to the database
     await saveMessage(conversationId, 'user', userMessage);
 
-    // Fetch all messages from the database for this conversation
     const dbMessages = await getConversationHistory(conversationId);
+    const conversationHistory = buildConversationHistory(dbMessages);
 
-    // Format messages for Claude API
-    conversationHistory = dbMessages.map(dbMessage => {
-      let content;
-      try {
-        content = JSON.parse(dbMessage.content);
-      } catch (e) {
-        content = dbMessage.content;
-      }
-      return {
-        role: dbMessage.role,
-        content
-      };
-    });
+    const mcpTools = mcpClient.tools.length > 0 ? mcpClient.getOpenAiTools() : [];
+    const tryonTools = process.env.REPLICATE_API_TOKEN ? getTryonOpenAiTools() : [];
+    const openAiTools = [...mcpTools, ...tryonTools];
+    if (tryonTools.length > 0) {
+      console.log('[Chat] Try-on tools enabled:', tryonTools.map(t => t.function.name).join(', '));
+    }
 
-    // Execute the conversation stream
-    // Execute the conversation once with DeepSeek
-const finalMessage = await deepseekService.streamConversation(
-  {
-    messages: conversationHistory,
-    promptType,
-    tools: mcpClient.tools, // not used in minimal DeepSeek version
-  },
-  {
-    // Handle text chunks
-    onText: (textDelta) => {
-      stream.sendMessage({
-        type: "chunk",
-        chunk: textDelta,
-      });
-    },
+    const MAX_LOOPS = deepseekService.MAX_TOOL_LOOP_ITERATIONS;
 
-    // Handle complete messages
-    onMessage: (message) => {
-      conversationHistory.push({
-        role: message.role,
-        content: message.content,
+    for (let i = 0; i < MAX_LOOPS; i++) {
+      console.log(`[Chat] Tool loop iteration ${i + 1}/${MAX_LOOPS}`);
+
+      const result = await deepseekService.getCompletion({
+        messages: conversationHistory,
+        promptType,
+        tools: openAiTools,
       });
 
-      saveMessage(conversationId, message.role, JSON.stringify(message.content)).catch(
-        (error) => {
-          console.error("Error saving message to database:", error);
+      const hasToolCalls = result?.tool_calls && result.tool_calls.length > 0;
+
+      if (!hasToolCalls) {
+        console.log(`[Chat] No tool calls in response, ending loop`);
+        if (result?.content) {
+          stream.sendMessage({ type: "chunk", chunk: result.content });
         }
-      );
 
-      // Send a completion message
-      stream.sendMessage({ type: "message_complete" });
-    },
-  }
-);
+        conversationHistory.push({ role: "assistant", content: result?.content || "" });
+        await saveMessage(conversationId, "assistant", result?.content || "");
 
-// Signal end of turn
-stream.sendMessage({ type: "end_turn" });
+        stream.sendMessage({ type: "message_complete" });
+        break;
+      }
 
-// Send product results if available (tools not wired yet, so probably empty)
-if (productsToDisplay.length > 0) {
-  stream.sendMessage({
-    type: "product_results",
-    products: productsToDisplay,
-  });
-}
+      stream.sendMessage({
+        type: "tool_use",
+        tool_use_message: "Looking up products for you..."
+      });
 
-    // Signal end of turn
+      conversationHistory.push({
+        role: "assistant",
+        content: null,
+        tool_calls: result.tool_calls,
+      });
+      await saveMessage(conversationId, "assistant", JSON.stringify({
+        content: null,
+        tool_calls: result.tool_calls,
+      }));
+
+      for (const toolCall of result.tool_calls) {
+        const toolName = toolCall.function.name;
+        let toolArgs;
+        try {
+          toolArgs = JSON.parse(toolCall.function.arguments);
+        } catch (e) {
+          toolArgs = {};
+        }
+
+        console.log(`Executing tool: ${toolName}`, toolArgs);
+
+        if (isTryonTool(toolName)) {
+          stream.sendMessage({
+            type: "tool_use",
+            tool_use_message:
+              toolName === "tryon_2d"
+                ? "Running AI 2D try-on..."
+                : "Generating 3D model (this can take 20–60 seconds)...",
+          });
+
+          try {
+            const toolResult = await handleTryonToolCall(toolName, toolArgs);
+
+            await toolService.addToolResultToHistory(
+              conversationHistory,
+              toolCall.id,
+              JSON.stringify(toolResult),
+              conversationId
+            );
+
+            if (toolResult.ok && toolName === "tryon_2d" && toolResult.image_url) {
+              stream.sendMessage({
+                type: "tryon_2d_result",
+                image_url: toolResult.image_url,
+                product_title: toolResult.product_title || null,
+                id: toolResult.id || null,
+              });
+            }
+
+            if (toolResult.ok && toolName === "tryon_3d" && toolResult.viewer_url) {
+              stream.sendMessage({
+                type: "tryon_3d_result",
+                glb_url: toolResult.glb_url,
+                viewer_url: toolResult.viewer_url,
+                preview_video_url: toolResult.preview_video_url || null,
+                id: toolResult.id || null,
+              });
+            }
+          } catch (err) {
+            console.error(`[Chat] Try-on tool ${toolName} failed:`, err);
+            await toolService.addToolResultToHistory(
+              conversationHistory,
+              toolCall.id,
+              JSON.stringify({ ok: false, error: err.message }),
+              conversationId
+            );
+          }
+          continue;
+        }
+
+        try {
+          const toolResponse = await mcpClient.callTool(toolName, toolArgs);
+
+          if (toolResponse.error) {
+            await toolService.handleToolError(
+              toolResponse, toolName, toolCall.id,
+              conversationHistory,
+              (msg) => stream.sendMessage(msg),
+              conversationId
+            );
+          } else {
+            await toolService.handleToolSuccess(
+              toolResponse, toolName, toolCall.id,
+              conversationHistory, productsToDisplay, conversationId
+            );
+          }
+        } catch (error) {
+          console.error(`Failed to call tool ${toolName}:`, error);
+          await toolService.addToolResultToHistory(
+            conversationHistory, toolCall.id,
+            `Error: ${error.message}`,
+            conversationId
+          );
+        }
+      }
+    }
+
     stream.sendMessage({ type: 'end_turn' });
 
-    // Send product results if available
     if (productsToDisplay.length > 0) {
+      console.log(`[Chat] Sending ${productsToDisplay.length} product results to frontend`);
       stream.sendMessage({
         type: 'product_results',
         products: productsToDisplay
       });
+    } else {
+      console.log(`[Chat] No products to display (tool wasn't called or failed)`);
     }
   } catch (error) {
-    // The streaming handler takes care of error handling
+    console.error('Chat session error:', error);
     throw error;
   }
 }
 
-/**
- * Get the customer MCP API URL for a shop
- * @param {string} shopDomain - The shop domain
- * @param {string} conversationId - The conversation ID
- * @returns {string} The customer MCP API URL
- */
+function buildConversationHistory(dbMessages) {
+  const history = [];
+
+  for (const msg of dbMessages) {
+    if (msg.role === 'user') {
+      history.push({ role: 'user', content: msg.content });
+    } else if (msg.role === 'assistant') {
+      try {
+        const parsed = JSON.parse(msg.content);
+        if (parsed && typeof parsed === 'object' && parsed.tool_calls) {
+          history.push({
+            role: 'assistant',
+            content: parsed.content || null,
+            tool_calls: parsed.tool_calls,
+          });
+        } else {
+          history.push({ role: 'assistant', content: msg.content });
+        }
+      } catch {
+        history.push({ role: 'assistant', content: msg.content });
+      }
+    } else if (msg.role === 'tool') {
+      try {
+        const parsed = JSON.parse(msg.content);
+        history.push({
+          role: 'tool',
+          tool_call_id: parsed.tool_call_id,
+          content: parsed.content,
+        });
+      } catch {
+        history.push({ role: 'tool', content: msg.content });
+      }
+    }
+  }
+
+  return history;
+}
+
 async function getCustomerAccountUrls(shopDomain, conversationId) {
   try {
-    // Check if the customer account URL exists in the DB
     const existingUrls = await getCustomerAccountUrlsFromDb(conversationId);
-
-    // If URL exists, return early with the MCP API URL
     if (existingUrls) return existingUrls;
 
-    // If not, query for it from the Shopify API
     const { hostname } = new URL(shopDomain);
 
     const urls = await Promise.all([
@@ -290,11 +350,6 @@ async function getCustomerAccountUrls(shopDomain, conversationId) {
   }
 }
 
-/**
- * Gets CORS headers for the response
- * @param {Request} request - The request object
- * @returns {Object} CORS headers object
- */
 function getCorsHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
   const requestHeaders = request.headers.get("Access-Control-Request-Headers") || "Content-Type, Accept";
@@ -304,15 +359,10 @@ function getCorsHeaders(request) {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": requestHeaders,
     "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Max-Age": "86400" // 24 hours
+    "Access-Control-Max-Age": "86400"
   };
 }
 
-/**
- * Get SSE headers for the response
- * @param {Request} request - The request object
- * @returns {Object} SSE headers object
- */
 function getSseHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
 

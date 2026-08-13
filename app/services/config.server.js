@@ -1,15 +1,10 @@
-// app/services/config.server.js (or wherever this lives)
-
 export const AppConfig = {
-  // API Configuration
   api: {
-    // Use a valid DeepSeek model instead of Claude
-    defaultModel: "deepseek-v4-flash", // or "deepseek-v4-pro"
-    maxTokens: 512, // start lower; you can increase later
+    defaultModel: "deepseek-v4-flash",
+    maxTokens: 512,
     defaultPromptType: "standardAssistant",
   },
 
-  // Error Message Templates
   errorMessages: {
     missingMessage: "Message is required",
     apiUnsupported:
@@ -21,10 +16,29 @@ export const AppConfig = {
     genericError: "Failed to get response from DeepSeek",
   },
 
-  // Tool Configuration
   tools: {
-    productSearchName: "search_shop_catalog",
+    productSearchName: "search_catalog",
     maxProductsToDisplay: 3,
+  },
+
+  providers: {
+    llm: process.env.LLM_PROVIDER || "deepseek",
+    imageEdit: process.env.IMAGE_EDIT_PROVIDER || "replicate-p-image-edit",
+    imageTo3d: process.env.IMAGE_TO_3D_PROVIDER || "replicate-trellis",
+  },
+
+  replicate: {
+    imageEditModel:
+      process.env.REPLICATE_IMAGE_EDIT_MODEL || "prunaai/p-image-edit",
+    imageTo3dModel:
+      process.env.REPLICATE_IMAGE_TO_3D_MODEL ||
+      "firtoz/trellis:e8f6c45206993f297372f5436b90350817bd9b4a0d52d2a76df50c1c8afa2b3c",
+  },
+
+  tryon: {
+    resultsDir: process.env.TRYON_RESULTS_DIR || "storage/tryon-results",
+    publicBasePath: "/api/tryon/results",
+    appUrl: (process.env.APP_URL || "https://localhost:3458").replace(/\/$/, ""),
   },
 };
 

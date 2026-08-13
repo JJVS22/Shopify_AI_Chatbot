@@ -589,6 +589,20 @@
             ShopAIChat.UI.displayProductResults(data.products);
             break;
 
+          case 'tryon_2d_result':
+            if (data.image_url) {
+              ShopAIChat.TryOn.displayResult(data.image_url, data.product_title, true);
+            }
+            break;
+
+          case 'tryon_3d_result':
+            if (data.viewer_url || data.glb_url) {
+              var link = data.viewer_url || data.glb_url;
+              ShopAIChat.TryOn.add3dLinkMessage(link);
+              window.open(link, '_blank');
+            }
+            break;
+
           case 'tool_use':
             if (data.tool_use_message) {
               ShopAIChat.Message.addToolUse(data.tool_use_message, messagesContainer);
@@ -895,9 +909,253 @@
         });
 
         info.appendChild(button);
+
+        // Add try-on button
+        const tryonBtn = document.createElement('button');
+        tryonBtn.classList.add('shop-ai-tryon-button');
+        tryonBtn.textContent = 'Try On';
+        tryonBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          ShopAIChat.TryOn.open(product);
+        });
+        info.appendChild(tryonBtn);
+
         card.appendChild(info);
 
         return card;
+      }
+    },
+
+    /**
+     * 2D Try-On functionality
+     */
+    TryOn: {
+      state: {
+        currentProduct: null,
+        poseDetector: null,
+        isLoading: false,
+        mediaPipeLoaded: false
+      },
+
+      open: function(product) {
+        this.state.currentProduct = product;
+
+        if (!product.image_url) {
+          ShopAIChat.Message.add("This product doesn't have a preview image for try-on.", 'assistant',
+            ShopAIChat.UI.elements.messagesContainer);
+          return;
+        }
+
+        this.showUploadUI();
+      },
+
+      showUploadUI: function() {
+        var existingOverlay = document.getElementById('shop-ai-tryon-overlay');
+        if (existingOverlay) existingOverlay.remove();
+
+        const overlay = document.createElement('div');
+        overlay.classList.add('shop-ai-tryon-overlay');
+        overlay.id = 'shop-ai-tryon-overlay';
+
+        const modal = document.createElement('div');
+        modal.classList.add('shop-ai-tryon-modal');
+
+        modal.innerHTML = '<h3>Try On ' + (this.state.currentProduct?.title || 'Product') + '</h3>' +
+          '<p class="shop-ai-tryon-sub">Upload a full-body photo to see a demo overlay</p>' +
+          '<div class="shop-ai-tryon-upload-area" id="shop-ai-tryon-upload">' +
+            '<div class="shop-ai-tryon-upload-icon">📷</div>' +
+            '<p>Click or drag a photo here</p>' +
+            '<p class="shop-ai-tryon-hint">Stands facing the camera works best</p>' +
+          '</div>' +
+          '<input type="file" id="shop-ai-tryon-file" accept="image/*" style="display:none">' +
+          '<div class="shop-ai-tryon-loading" id="shop-ai-tryon-loading" style="display:none">' +
+            '<div class="shop-ai-tryon-spinner"></div>' +
+            '<p>Processing your try-on...</p>' +
+          '</div>' +
+          '<button class="shop-ai-tryon-cancel" id="shop-ai-tryon-cancel">Cancel</button>';
+
+        modal.querySelector('#shop-ai-tryon-cancel').addEventListener('click', () => this.closeUploadUI());
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', function(e) {
+          if (e.target === overlay) ShopAIChat.TryOn.closeUploadUI();
+        });
+
+        var self = this;
+        var uploadArea = modal.querySelector('#shop-ai-tryon-upload');
+        var fileInput = modal.querySelector('#shop-ai-tryon-file');
+
+        uploadArea.addEventListener('click', function() { fileInput.click(); });
+        fileInput.addEventListener('change', function(e) {
+          if (e.target.files && e.target.files[0]) self.handleFile(e.target.files[0]);
+        });
+
+        uploadArea.addEventListener('dragover', function(e) { e.preventDefault(); uploadArea.classList.add('dragover'); });
+        uploadArea.addEventListener('dragleave', function() { uploadArea.classList.remove('dragover'); });
+        uploadArea.addEventListener('drop', function(e) {
+          e.preventDefault();
+          uploadArea.classList.remove('dragover');
+          if (e.dataTransfer.files && e.dataTransfer.files[0]) self.handleFile(e.dataTransfer.files[0]);
+        });
+      },
+
+      closeUploadUI: function() {
+        var overlay = document.getElementById('shop-ai-tryon-overlay');
+        if (overlay) overlay.remove();
+        this.state.currentProduct = null;
+      },
+
+      handleFile: async function(file) {
+        if (!file.type.startsWith('image/')) {
+          alert('Please upload an image file.');
+          return;
+        }
+
+        if (file.size > 10 * 1024 * 1024) {
+          alert('Photo is too large. Please use an image under 10MB.');
+          return;
+        }
+
+        this.showLoading();
+
+        try {
+          var cloudResult = await this.runCloud2dTryon(file);
+          if (cloudResult && cloudResult.image_url) {
+            this.displayResult(cloudResult.image_url, cloudResult.product_title, true);
+          } else {
+            ShopAIChat.Message.add('AI 2D try-on returned no result. Please try again.', 'assistant',
+              ShopAIChat.UI.elements.messagesContainer);
+          }
+        } catch (err) {
+          console.error('Try-on failed:', err);
+          ShopAIChat.Message.add('AI 2D try-on failed: ' + err.message, 'assistant',
+            ShopAIChat.UI.elements.messagesContainer);
+        } finally {
+          this.closeUploadUI();
+        }
+      },
+
+      runCloud2dTryon: async function(file) {
+        var product = this.state.currentProduct;
+        if (!product || !product.image_url) return null;
+
+        var formData = new FormData();
+        formData.append('person_image', file);
+        formData.append('product_image_url', product.image_url);
+        if (product.title) formData.append('product_title', product.title);
+
+        var response = await fetch('https://localhost:3458/api/tryon/2d', {
+          method: 'POST',
+          body: formData
+        });
+
+        var data = await response.json();
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || ('HTTP ' + response.status));
+        }
+
+        console.log('[TryOn] Cloud 2D result:', data.image_url);
+        return data;
+      },
+
+      showLoading: function() {
+        var uploadArea = document.getElementById('shop-ai-tryon-upload');
+        var loading = document.getElementById('shop-ai-tryon-loading');
+        if (uploadArea) uploadArea.style.display = 'none';
+        if (loading) loading.style.display = 'flex';
+      },
+
+      displayResult: function(imageSrc, productTitle, isCloud) {
+        var container = document.createElement('div');
+        container.classList.add('shop-ai-tryon-result');
+
+        var img = document.createElement('img');
+        img.alt = 'Try-on result';
+
+        img.onload = function() {
+          console.log('[TryOn] Result image rendered, size:', img.naturalWidth + 'x' + img.naturalHeight);
+        };
+        img.onerror = function() {
+          console.error('[TryOn] Result image failed to render');
+        };
+        img.src = imageSrc;
+        container.appendChild(img);
+
+        var caption = document.createElement('p');
+        caption.classList.add('shop-ai-tryon-caption');
+        caption.textContent = (isCloud ? 'AI try-on of ' : 'Demo try-on of ') +
+          (productTitle || this.state.currentProduct?.title || 'the selected product') +
+          (isCloud ? '' : ' (local overlay)');
+        container.appendChild(caption);
+
+        if (imageSrc) {
+          var btn3d = document.createElement('button');
+          btn3d.type = 'button';
+          btn3d.className = 'shop-ai-tryon-3d-btn';
+          btn3d.textContent = 'View in 3D';
+          var self = this;
+          btn3d.addEventListener('click', function() {
+            self.request3dFromImage(imageSrc);
+          });
+          container.appendChild(btn3d);
+        }
+
+        console.log('[TryOn] Appending result to chat');
+        var messagesContainer = ShopAIChat.UI.elements.messagesContainer;
+        messagesContainer.appendChild(container);
+        ShopAIChat.UI.scrollToBottom();
+      },
+
+      add3dLinkMessage: function(viewerUrl) {
+        var messagesContainer = ShopAIChat.UI.elements.messagesContainer;
+        var el = document.createElement('div');
+        el.classList.add('shop-ai-message', 'assistant');
+
+        var txt = document.createTextNode('Your 3D model is ready — ');
+        el.appendChild(txt);
+
+        var a = document.createElement('a');
+        a.href = viewerUrl;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = 'Open 3D viewer';
+        el.appendChild(a);
+
+        var saved = document.createTextNode('  (link: ' + viewerUrl + ')');
+        el.appendChild(saved);
+
+        messagesContainer.appendChild(el);
+        ShopAIChat.UI.scrollToBottom();
+      },
+
+      request3dFromImage: async function(imageUrl) {
+        var confirmed = window.confirm('Generate a 3D model from this try-on?\n\nThis runs the 3D generation model and uses AI tokens (may take ~20-60s).');
+        if (!confirmed) return;
+
+        var messagesContainer = ShopAIChat.UI.elements.messagesContainer;
+        ShopAIChat.Message.add('Generating 3D model from your try-on… (this can take up to a minute)', 'assistant', messagesContainer);
+
+        try {
+          var response = await fetch('https://localhost:3458/api/tryon/3d', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_url: imageUrl })
+          });
+          var data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || ('HTTP ' + response.status));
+
+          var linkUrl = data.viewer_url || data.glb_url;
+          if (linkUrl) {
+            this.add3dLinkMessage(linkUrl);
+            window.open(linkUrl, '_blank');
+          } else {
+            throw new Error('No 3D output returned');
+          }
+        } catch (e) {
+          console.error('[TryOn] 3D generation failed:', e);
+          ShopAIChat.Message.add('Sorry, the 3D generation failed. Please try again.', 'assistant', messagesContainer);
+        }
       }
     },
 

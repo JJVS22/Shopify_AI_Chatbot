@@ -1,19 +1,12 @@
-// app/services/deepseek.server.js
 import OpenAI from "openai";
 import AppConfig from "./config.server";
 import systemPrompts from "../prompts/prompts.json";
 
-// Create DeepSeek client using OpenAI SDK
 const deepseekClient = new OpenAI({
   baseURL: "https://api.deepseek.com",
   apiKey: process.env.DEEPSEEK_API_KEY,
 });
 
-/**
- * Gets the system prompt content for a given prompt type
- * @param {string} promptType - The prompt type to retrieve
- * @returns {string} The system prompt content
- */
 const getSystemPrompt = (promptType) => {
   return (
     systemPrompts.systemPrompts[promptType]?.content ||
@@ -21,51 +14,76 @@ const getSystemPrompt = (promptType) => {
   );
 };
 
-/**
- * Simple conversation function (non-streaming) for DeepSeek.
- * Called by the chat route with conversation history and optional tools.
- */
-const streamConversation = async (
-  { messages, promptType = AppConfig.api.defaultPromptType, tools }, // tools not used yet
-  streamHandlers
-) => {
+const MAX_TOOL_LOOP_ITERATIONS = 5;
+
+const buildApiPayload = (chatMessages, tools) => {
+  const apiPayload = {
+    model: AppConfig.api.defaultModel || "deepseek-v4-flash",
+    messages: chatMessages,
+    max_tokens: 1000,
+  };
+
+  if (tools && tools.length > 0) {
+    apiPayload.tools = tools;
+    apiPayload.tool_choice = "auto";
+    apiPayload.thinking = { type: "disabled" };
+  } else {
+    apiPayload.thinking = { type: "enabled" };
+    apiPayload.reasoning_effort = "low";
+  }
+
+  return apiPayload;
+};
+
+const getCompletion = async ({ messages, promptType, tools }) => {
   const systemInstruction = getSystemPrompt(promptType);
 
-  // Build chat messages: system + history from DB
   const chatMessages = [
     { role: "system", content: systemInstruction },
     ...messages,
   ];
 
-  // Call DeepSeek via OpenAI SDK
-  const completion = await deepseekClient.chat.completions.create({
-    model: AppConfig.api.defaultModel || "deepseek-v4-flash",
-    messages: chatMessages,
-    thinking: { type: "enabled" },
-    reasoning_effort: "low",
-    stream: false,
-    max_tokens: 1000,
-  });
+  const apiPayload = buildApiPayload(chatMessages, tools);
 
-  const finalMessage = completion.choices[0]?.message;
+  console.log(`[DeepSeek] Calling API with ${tools?.length || 0} tools, ${chatMessages.length} messages`);
 
-  // Call handlers for compatibility with existing code
-  if (streamHandlers && streamHandlers.onText && finalMessage?.content) {
-    streamHandlers.onText(finalMessage.content);
-  }
-  if (streamHandlers && streamHandlers.onMessage) {
-    streamHandlers.onMessage(finalMessage);
+  const completion = await deepseekClient.chat.completions.create(apiPayload);
+
+  const message = completion.choices[0]?.message;
+
+  if (message?.tool_calls?.length) {
+    console.log(`[DeepSeek] Response contains ${message.tool_calls.length} tool call(s):`,
+      message.tool_calls.map(tc => tc.function.name).join(', '));
+  } else {
+    console.log(`[DeepSeek] Response is text-only (no tool calls), content length: ${message?.content?.length || 0}`);
   }
 
-  // Tool use is not implemented in this basic version.
-  return finalMessage;
+  return message;
 };
 
-export function createDeepseekService(apiKey = process.env.DEEPSEEK_API_KEY) {
-  // For now we reuse deepseekClient; apiKey parameter is unused but keeps same shape as Claude service.
+const streamConversation = async (
+  { messages, promptType, tools },
+  streamHandlers
+) => {
+  const result = await getCompletion({ messages, promptType, tools });
+
+  if (streamHandlers?.onText && result?.content) {
+    streamHandlers.onText(result.content);
+  }
+
+  if (streamHandlers?.onMessage && result) {
+    streamHandlers.onMessage(result);
+  }
+
+  return result;
+};
+
+export function createDeepseekService() {
   return {
     streamConversation,
+    getCompletion,
     getSystemPrompt,
+    MAX_TOOL_LOOP_ITERATIONS,
   };
 }
 

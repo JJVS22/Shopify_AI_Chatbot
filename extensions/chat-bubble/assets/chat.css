@@ -431,7 +431,7 @@
     padding: 5px 0;
     scrollbar-width: thin;
     width: 100%;
-    min-height: 220px;
+    align-items: stretch;
     background-color: transparent;
     -webkit-overflow-scrolling: touch;
   }
@@ -453,10 +453,10 @@
     box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
     min-width: 180px;
     max-width: 180px;
-    overflow: hidden;
     transition: transform 0.2s, box-shadow 0.2s;
     flex-shrink: 0;
-    display: block;
+    display: flex;
+    flex-direction: column;
     border: 1px solid #eaeaea;
     position: relative;
   }
@@ -475,6 +475,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
   }
   
   .shop-ai-product-image img {
@@ -486,30 +487,37 @@
   /* Product Info Styling */
   .shop-ai-product-info {
     padding: 10px;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
   }
-  
+
   .shop-ai-product-title {
     margin: 0 0 5px 0;
     font-size: 14px;
     line-height: 1.3;
     font-weight: 500;
     color: #333;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: normal;
   }
-  
+
   .shop-ai-product-price {
-    margin: 0 0 10px 0;
+    margin: 0 0 auto 0;
     font-size: 14px;
     font-weight: 600;
     color: #5046e4;
   }
-  
+
   /* Add to Cart Button Styling */
   .shop-ai-add-to-cart {
     width: 100%;
     padding: 8px 0;
+    margin-top: 8px;
     background-color: #5046e4;
     color: white;
     border: none;
@@ -518,6 +526,7 @@
     font-weight: 500;
     cursor: pointer;
     transition: background-color 0.2s;
+    flex-shrink: 0;
   }
   
   .shop-ai-add-to-cart:hover {
@@ -607,5 +616,194 @@
     100% {
       opacity: 0.4;
       transform: scale(1);
+    }
+  }
+
+  /* Try-On Button */
+  .shop-ai-tryon-button {
+    width: 100%;
+    padding: 6px 0;
+    margin-top: 6px;
+    background-color: transparent;
+    color: #5046e4;
+    border: 1.5px solid #5046e4;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+    flex-shrink: 0;
+  }
+
+  .shop-ai-tryon-button:hover {
+    background-color: #5046e4;
+    color: white;
+  }
+
+  /* Try-On Upload Overlay */
+  .shop-ai-tryon-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: tryonFadeIn 0.2s ease;
+  }
+
+  @keyframes tryonFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .shop-ai-tryon-modal {
+    background: white;
+    border-radius: 16px;
+    padding: 28px 24px 20px;
+    width: 90vw;
+    max-width: 400px;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  }
+
+  .shop-ai-tryon-modal h3 {
+    margin: 0 0 4px;
+    font-size: 18px;
+    color: #333;
+  }
+
+  .shop-ai-tryon-sub {
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: #777;
+  }
+
+  .shop-ai-tryon-upload-area {
+    border: 2px dashed #ccc;
+    border-radius: 12px;
+    padding: 32px 16px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+
+  .shop-ai-tryon-upload-area:hover,
+  .shop-ai-tryon-upload-area.dragover {
+    border-color: #5046e4;
+    background: rgba(80, 70, 228, 0.04);
+  }
+
+  .shop-ai-tryon-upload-icon {
+    font-size: 36px;
+    margin-bottom: 8px;
+  }
+
+  .shop-ai-tryon-upload-area p {
+    margin: 4px 0;
+    font-size: 14px;
+    color: #555;
+  }
+
+  .shop-ai-tryon-hint {
+    font-size: 12px !important;
+    color: #999 !important;
+  }
+
+  .shop-ai-tryon-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 0;
+    color: #555;
+    font-size: 14px;
+  }
+
+  .shop-ai-tryon-spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid #e0e0e0;
+    border-top-color: #5046e4;
+    border-radius: 50%;
+    animation: tryonSpin 0.8s linear infinite;
+    margin-bottom: 12px;
+  }
+
+  @keyframes tryonSpin {
+    to { transform: rotate(360deg); }
+  }
+
+  .shop-ai-tryon-cancel {
+    margin-top: 16px;
+    padding: 8px 24px;
+    background: #f1f1f1;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #555;
+    cursor: pointer;
+  }
+
+  .shop-ai-tryon-cancel:hover {
+    background: #e4e4e4;
+  }
+
+  .shop-ai-tryon-3d-btn {
+    display: block;
+    width: calc(100% - 20px);
+    margin: 8px 10px 10px;
+    padding: 8px 0;
+    background: #5046e4;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .shop-ai-tryon-3d-btn:hover {
+    background: #3f36c0;
+  }
+
+  /* Try-On Result in Chat */
+  .shop-ai-tryon-result {
+    align-self: flex-start;
+    margin: 8px 0;
+    max-width: 80%;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border: 1px solid #eaeaea;
+  }
+
+  .shop-ai-tryon-result img {
+    width: 100%;
+    display: block;
+    border-radius: 12px 12px 0 0;
+    min-height: 60px;
+    background: #f5f5f5;
+    object-fit: contain;
+  }
+
+  .shop-ai-tryon-caption {
+    padding: 6px 10px;
+    margin: 0;
+    font-size: 11px;
+    color: #999;
+    background: #fafafa;
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 0 0 12px 12px;
+  }
+
+  @media (max-width: 480px) {
+    .shop-ai-tryon-modal {
+      padding: 20px 16px 16px;
+      border-radius: 12px;
+    }
+
+    .shop-ai-tryon-result {
+      max-width: 95%;
     }
   }

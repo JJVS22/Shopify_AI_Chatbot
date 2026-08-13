@@ -285,6 +285,22 @@ class MCPClient {
       };
     });
   }
+
+  /**
+   * Returns tools formatted for OpenAI/DeepSeek API compatibility.
+   * Converts MCP input_schema → OpenAI function.parameters
+   * @returns {Array} OpenAI-compatible tool definitions
+   */
+  getOpenAiTools() {
+    return this.tools.map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.input_schema,
+      },
+    }));
+  }
 }
 
 export default MCPClient;
