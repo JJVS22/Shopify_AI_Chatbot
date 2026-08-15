@@ -19,14 +19,14 @@ export function createToolService() {
     }
   };
 
-  const handleToolSuccess = async (toolUseResponse, toolName, toolUseId, conversationHistory, productsToDisplay, conversationId) => {
+  const handleToolSuccess = async (toolUseResponse, toolName, toolUseId, conversationHistory, productsToDisplay, conversationId, mcpClient) => {
     const resultText = extractToolResultText(toolUseResponse);
 
     console.log(`[Tool] ${toolName} succeeded, result length: ${resultText.length}`);
 
     if (toolName === AppConfig.tools.productSearchName) {
       console.log(`[Tool] Raw product search response:`, JSON.stringify(toolUseResponse).substring(0, 500));
-      const products = processProductSearchResult(toolUseResponse);
+      const products = await processProductSearchResult(toolUseResponse, mcpClient);
       if (products.length > 0) {
         const existingIds = new Set(productsToDisplay.map(p => p.id));
         const newProducts = products.filter(p => !existingIds.has(p.id));
@@ -52,7 +52,7 @@ export function createToolService() {
     return typeof toolUseResponse === "string" ? toolUseResponse : JSON.stringify(toolUseResponse);
   };
 
-  const processProductSearchResult = (toolUseResponse) => {
+  const processProductSearchResult = async (toolUseResponse, mcpClient) => {
     try {
       console.log("[Tool] Processing product search result");
       let products = [];
@@ -78,9 +78,12 @@ export function createToolService() {
               console.log(`[Tool] First raw product sample:`, JSON.stringify(responseData.products[0]).substring(0, 500));
             }
 
-            products = responseData.products
-              .slice(0, AppConfig.tools.maxProductsToDisplay)
-              .map((p) => formatProductData(p));
+            const rawProducts = responseData.products.slice(0, AppConfig.tools.maxProductsToDisplay);
+            products = [];
+            for (const rawProduct of rawProducts) {
+              const url = await resolveProductUrl(rawProduct, mcpClient);
+              products.push(formatProductData(rawProduct, url));
+            }
 
             console.log(`[Tool] Formatted ${products.length} products`);
             if (products.length > 0) {
@@ -101,6 +104,50 @@ export function createToolService() {
       console.error("[Tool] Error processing product search results:", error);
       return [];
     }
+  };
+
+  /**
+   * Build a real, clickable storefront URL for a product.
+   * Prefers an absolute URL or handle from the search result; otherwise
+   * queries get_product_details to find the handle (numeric-id /products/<id>
+   * paths are not valid Shopify product links).
+   * @param {Object} product - raw catalog product
+   * @param {Object} [mcpClient] - MCPClient instance
+   * @returns {Promise<string>} absolute URL or "/products/<handle>", or "" if unknown
+   */
+  const resolveProductUrl = async (product, mcpClient) => {
+    // Direct absolute URLs or handle-based paths from the search response
+    const direct = extractProductUrl(product);
+    if (direct && /^https?:\/\//i.test(direct)) return direct;
+    if (product.handle) return `/products/${product.handle}`;
+    if (direct && direct.startsWith('/products/') && !/\/products\/\d+$/.test(direct)) {
+      return direct; // handle-based path, not a numeric-id fallback
+    }
+
+    // Try to get the real handle/URL via get_product_details
+    if (mcpClient && (product.id || product.product_id)) {
+      const gid = product.id || product.product_id;
+      const attempts = [
+        { product_id: gid },
+        { catalog: { product_id: gid } },
+      ];
+      for (const args of attempts) {
+        try {
+          const res = await mcpClient.callTool('get_product_details', args);
+          const text = res?.content?.[0]?.text;
+          if (!text) continue;
+          const data = typeof text === 'string' ? JSON.parse(text) : text;
+          const detail = data?.product || data?.products?.[0] || data;
+          const url = detail?.url || detail?.onlineStoreUrl || detail?.online_store_url;
+          if (url && /^https?:\/\//i.test(String(url))) return String(url);
+          if (detail?.handle) return `/products/${detail.handle}`;
+        } catch (err) {
+          console.warn('[Tool] get_product_details failed:', err.message);
+        }
+      }
+    }
+
+    return ''; // unknown — no broken link
   };
 
   const extractProductImage = (product) => {
@@ -169,14 +216,14 @@ export function createToolService() {
     return '';
   };
 
-  const formatProductData = (product) => {
+  const formatProductData = (product, resolvedUrl) => {
     return {
       id: product.product_id || product.id || `product-${Math.random().toString(36).substring(7)}`,
       title: product.title || 'Product',
       price: extractProductPrice(product),
       image_url: extractProductImage(product),
       description: extractProductDescription(product),
-      url: extractProductUrl(product)
+      url: resolvedUrl !== undefined ? resolvedUrl : extractProductUrl(product)
     };
   };
 

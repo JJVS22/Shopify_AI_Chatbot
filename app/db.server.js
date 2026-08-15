@@ -257,3 +257,117 @@ export async function getCustomerAccountUrls(conversationId) {
     return null;
   }
 }
+
+/**
+ * Record a try-on result (2D image / 3D glb or mp4) linked to a conversation.
+ * @param {object} data - { conversationId, type, artifact, fileName, filePath, publicUrl, sourceResultId?, productTitle?, placement?, provider?, model? }
+ * @returns {Promise<Object>} The saved TryOnResult
+ */
+export async function saveTryonResultRecord(data) {
+  const { conversationId, type, artifact, fileName, filePath, publicUrl } = data;
+  if (!conversationId || !type || !fileName || !filePath || !publicUrl) {
+    throw new Error('saveTryonResultRecord requires conversationId, type, fileName, filePath, publicUrl');
+  }
+
+  await createOrUpdateConversation(conversationId);
+
+  return await prisma.tryOnResult.create({
+    data: {
+      conversationId,
+      type,
+      artifact: artifact || null,
+      fileName,
+      filePath,
+      publicUrl,
+      sourceResultId: data.sourceResultId || null,
+      productTitle: data.productTitle || null,
+      placement: data.placement || null,
+      provider: data.provider || null,
+      model: data.model || null,
+    },
+  });
+}
+
+/**
+ * Get all try-on results for a conversation.
+ * @param {string} conversationId
+ * @returns {Promise<Array>} Ordered try-on results
+ */
+export async function getTryOnResultsByConversation(conversationId) {
+  try {
+    return await prisma.tryOnResult.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'asc' },
+    });
+  } catch (error) {
+    console.error('Error retrieving try-on results:', error);
+    return [];
+  }
+}
+
+/**
+ * Find a try-on result by its public URL (used to link 3D back to its 2D source).
+ * @param {string} publicUrl
+ * @returns {Promise<Object|null>}
+ */
+export async function getTryOnResultByPublicUrl(publicUrl) {
+  try {
+    return await prisma.tryOnResult.findFirst({ where: { publicUrl } });
+  } catch (error) {
+    console.error('Error finding try-on result by URL:', error);
+    return null;
+  }
+}
+
+/**
+ * Find conversation ids with no activity since `before`.
+ * @param {Date} before
+ * @returns {Promise<Array<string>>}
+ */
+export async function findExpiredConversationIds(before) {
+  try {
+    const rows = await prisma.conversation.findMany({
+      where: { updatedAt: { lt: before } },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  } catch (error) {
+    console.error('Error finding expired conversations:', error);
+    return [];
+  }
+}
+
+/**
+ * Get try-on result file paths for a set of conversation ids (for cleanup).
+ * @param {Array<string>} conversationIds
+ * @returns {Promise<Array<string>>} filePath list
+ */
+export async function getTryOnFilePathsForConversations(conversationIds) {
+  try {
+    const rows = await prisma.tryOnResult.findMany({
+      where: { conversationId: { in: conversationIds } },
+      select: { filePath: true },
+    });
+    return rows.map((r) => r.filePath);
+  } catch (error) {
+    console.error('Error getting try-on file paths:', error);
+    return [];
+  }
+}
+
+/**
+ * Delete conversations (cascades to Message + TryOnResult rows).
+ * @param {Array<string>} conversationIds
+ * @returns {Promise<number>} number deleted
+ */
+export async function deleteConversations(conversationIds) {
+  try {
+    const result = await prisma.conversation.deleteMany({
+      where: { id: { in: conversationIds } },
+    });
+    return result.count;
+  } catch (error) {
+    console.error('Error deleting conversations:', error);
+    return 0;
+  }
+}

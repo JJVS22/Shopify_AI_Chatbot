@@ -107,6 +107,9 @@ export function createTrellisAdapter() {
         result.id = saved.id;
         result.glbUrl = saved.publicUrl;
         result.localGlbPath = saved.absolutePath;
+        result.glbRelativePath = saved.relativePath;
+        result.glbFileName = saved.fileName;
+        result.glbArtifact = "model_file";
       }
     }
 
@@ -122,6 +125,9 @@ export function createTrellisAdapter() {
           relatedGlbId: result.id,
         });
         result.previewVideoUrl = saved.publicUrl;
+        result.videoRelativePath = saved.relativePath;
+        result.videoFileName = saved.fileName;
+        result.videoArtifact = "color_video";
         if (!result.id) result.id = saved.id;
       }
     }

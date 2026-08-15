@@ -133,6 +133,14 @@ async function handleChatSession({
       console.log('[Chat] Try-on tools enabled:', tryonTools.map(t => t.function.name).join(', '));
     }
 
+    let storeContext = null;
+    try {
+      storeContext = await buildStoreContext(mcpClient);
+      if (storeContext) console.log('[Chat] Store context built for LLM');
+    } catch (err) {
+      console.warn('[Chat] Failed to build store context:', err.message);
+    }
+
     const MAX_LOOPS = deepseekService.MAX_TOOL_LOOP_ITERATIONS;
 
     for (let i = 0; i < MAX_LOOPS; i++) {
@@ -142,6 +150,7 @@ async function handleChatSession({
         messages: conversationHistory,
         promptType,
         tools: openAiTools,
+        storeContext,
       });
 
       const hasToolCalls = result?.tool_calls && result.tool_calls.length > 0;
@@ -195,7 +204,7 @@ async function handleChatSession({
           });
 
           try {
-            const toolResult = await handleTryonToolCall(toolName, toolArgs);
+            const toolResult = await handleTryonToolCall(toolName, toolArgs, conversationId);
 
             await toolService.addToolResultToHistory(
               conversationHistory,
@@ -247,7 +256,7 @@ async function handleChatSession({
           } else {
             await toolService.handleToolSuccess(
               toolResponse, toolName, toolCall.id,
-              conversationHistory, productsToDisplay, conversationId
+              conversationHistory, productsToDisplay, conversationId, mcpClient
             );
           }
         } catch (error) {
@@ -269,6 +278,14 @@ async function handleChatSession({
         type: 'product_results',
         products: productsToDisplay
       });
+
+      // Persist product cards so they can be restored when the user navigates
+      // between pages (stored as a special "product" message).
+      try {
+        await saveMessage(conversationId, 'product', JSON.stringify(productsToDisplay));
+      } catch (err) {
+        console.error('[Chat] Failed to persist product results:', err.message);
+      }
     } else {
       console.log(`[Chat] No products to display (tool wasn't called or failed)`);
     }
@@ -276,6 +293,40 @@ async function handleChatSession({
     console.error('Chat session error:', error);
     throw error;
   }
+}
+
+/**
+ * Build a short "what does this store sell" context for the LLM by doing one
+ * catalog search, so it doesn't invent unrelated products.
+ * @param {MCPClient} mcpClient
+ * @returns {Promise<string|null>}
+ */
+async function buildStoreContext(mcpClient) {
+  if (!mcpClient || !mcpClient.tools.length) return null;
+  if (!mcpClient.storefrontTools.some((t) => t.name === AppConfig.tools.productSearchName)) {
+    return null;
+  }
+
+  const res = await mcpClient.callTool(AppConfig.tools.productSearchName, {
+    catalog: { query: "products" },
+  });
+
+  const text = res?.content?.[0]?.text;
+  if (!text) return null;
+
+  const data = typeof text === "string" ? JSON.parse(text) : text;
+  if (!data?.products || data.products.length === 0) return null;
+
+  const titles = data.products
+    .slice(0, 20)
+    .map((p) => p.title || "Untitled product")
+    .join("\n- ");
+
+  return (
+    `The store sells the following products (catalog preview):\n- ${titles}\n` +
+    `Recommend ONLY products available in this store. Before suggesting products, ` +
+    `confirm availability with the search_catalog tool.`
+  );
 }
 
 function buildConversationHistory(dbMessages) {

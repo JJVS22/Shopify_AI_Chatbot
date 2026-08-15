@@ -35,11 +35,15 @@ const buildApiPayload = (chatMessages, tools) => {
   return apiPayload;
 };
 
-const getCompletion = async ({ messages, promptType, tools }) => {
+const getCompletion = async ({ messages, promptType, tools, storeContext }) => {
   const systemInstruction = getSystemPrompt(promptType);
 
+  const systemContent = storeContext
+    ? `${systemInstruction}\n\n## Store context\n${storeContext}`
+    : systemInstruction;
+
   const chatMessages = [
-    { role: "system", content: systemInstruction },
+    { role: "system", content: systemContent },
     ...messages,
   ];
 
@@ -62,10 +66,10 @@ const getCompletion = async ({ messages, promptType, tools }) => {
 };
 
 const streamConversation = async (
-  { messages, promptType, tools },
+  { messages, promptType, tools, storeContext },
   streamHandlers
 ) => {
-  const result = await getCompletion({ messages, promptType, tools });
+  const result = await getCompletion({ messages, promptType, tools, storeContext });
 
   if (streamHandlers?.onText && result?.content) {
     streamHandlers.onText(result.content);

@@ -15,12 +15,13 @@ export async function action({ request }) {
   try {
     const body = await request.json();
     const image = body.image_url || body.image;
+    const conversationId = body.conversation_id || body.conversationId;
 
     if (!image) {
       return json({ error: "image_url is required" }, 400, request);
     }
 
-    const result = await run3dTryon({ image });
+    const result = await run3dTryon({ image, conversationId });
 
     return json(
       {

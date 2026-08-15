@@ -4,6 +4,10 @@ import { ServerRouter } from "react-router";
 import { createReadableStreamFromReadable } from "@react-router/node";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
+import { startCleanupScheduler } from "./services/cleanup.server";
+
+// Lightweight data retention: auto-delete chats + try-on files older than 24h.
+startCleanupScheduler({ maxAgeHours: 24, intervalMs: 30 * 60 * 1000 });
 
 export const streamTimeout = 5000;
 

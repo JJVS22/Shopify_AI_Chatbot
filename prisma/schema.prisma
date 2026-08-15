@@ -54,10 +54,11 @@ model CodeVerifier {
 }
 
 model Conversation {
-  id        String    @id
-  messages  Message[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id           String        @id
+  messages     Message[]
+  tryOnResults TryOnResult[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 }
 
 model Message {
@@ -69,6 +70,26 @@ model Message {
   createdAt      DateTime     @default(now())
 
   @@index([conversationId])
+}
+
+model TryOnResult {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  type           String       // "2d" | "3d"
+  artifact       String?      // 2d → "image"; 3d → "model_file" | "color_video"
+  fileName       String
+  filePath       String
+  publicUrl      String
+  sourceResultId String?
+  productTitle   String?
+  placement      String?
+  provider       String?
+  model          String?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([type])
 }
 
 model CustomerAccountUrls {

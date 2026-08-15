@@ -19,6 +19,7 @@ export async function action({ request }) {
     let productImage;
     let prompt;
     let productTitle;
+    let conversationId;
 
     if (contentType.includes("multipart/form-data")) {
       const form = await request.formData();
@@ -26,6 +27,7 @@ export async function action({ request }) {
       productImage = form.get("product_image_url") || form.get("product_image");
       prompt = form.get("prompt") || undefined;
       productTitle = form.get("product_title") || undefined;
+      conversationId = form.get("conversation_id") || undefined;
 
       if (personFile && typeof personFile === "object" && personFile.arrayBuffer) {
         const buf = Buffer.from(await personFile.arrayBuffer());
@@ -40,6 +42,7 @@ export async function action({ request }) {
       productImage = body.product_image_url || body.productImage;
       prompt = body.prompt;
       productTitle = body.product_title || body.productTitle;
+      conversationId = body.conversation_id || body.conversationId;
     }
 
     if (!personImage || !productImage) {
@@ -55,6 +58,7 @@ export async function action({ request }) {
       productImage,
       prompt,
       productTitle,
+      conversationId,
     });
 
     return json(

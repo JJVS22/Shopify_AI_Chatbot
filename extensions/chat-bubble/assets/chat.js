@@ -31,6 +31,7 @@
           chatBubble: container.querySelector('.shop-ai-chat-bubble'),
           chatWindow: container.querySelector('.shop-ai-chat-window'),
           closeButton: container.querySelector('.shop-ai-chat-close'),
+          resizeButton: container.querySelector('.shop-ai-chat-resize'),
           chatInput: container.querySelector('.shop-ai-chat-input input'),
           sendButton: container.querySelector('.shop-ai-chat-send'),
           messagesContainer: container.querySelector('.shop-ai-chat-messages')
@@ -38,6 +39,9 @@
 
         // Detect mobile device
         this.isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+        // Restore persisted UI state (bubble position + window size)
+        this.restorePersistedUi();
 
         // Set up event listeners
         this.setupEventListeners();
@@ -52,13 +56,18 @@
        * Set up all event listeners for UI interactions
        */
       setupEventListeners: function() {
-        const { chatBubble, closeButton, chatInput, sendButton, messagesContainer } = this.elements;
+        const { closeButton, chatInput, sendButton, messagesContainer, resizeButton } = this.elements;
 
-        // Toggle chat window visibility
-        chatBubble.addEventListener('click', () => this.toggleChatWindow());
+        // Bubble: drag to move (snaps left/right) OR click to toggle window
+        this.enableBubbleDrag();
 
         // Close chat window
         closeButton.addEventListener('click', () => this.closeChatWindow());
+
+        // Toggle chat window size (enlarge / shrink)
+        if (resizeButton) {
+          resizeButton.addEventListener('click', () => this.toggleResize());
+        }
 
         // Send message when pressing Enter in input
         chatInput.addEventListener('keypress', (e) => {
@@ -87,6 +96,7 @@
 
         // Handle window resize to adjust scrolling
         window.addEventListener('resize', () => this.scrollToBottom());
+        window.addEventListener('resize', () => this.updateWindowDirection());
 
         // Add global click handler for auth links
         document.addEventListener('click', function(event) {
@@ -108,6 +118,188 @@
         };
         window.addEventListener('resize', setViewportHeight);
         setViewportHeight();
+      },
+
+      /**
+       * Restore persisted UI state (bubble position + window size) from sessionStorage.
+       */
+      restorePersistedUi: function() {
+        const chatWindow = this.elements.chatWindow;
+
+        // Window size
+        if (sessionStorage.getItem('shopAiWindowLarge') === '1') {
+          chatWindow.classList.add('large');
+        }
+
+        // Bubble position
+        try {
+          const pos = JSON.parse(sessionStorage.getItem('shopAiBubblePos'));
+          if (pos && typeof pos === 'object') {
+            this.applyBubblePosition(pos);
+          }
+        } catch (e) {
+          // ignore corrupt state
+        }
+
+        this.updateWindowDirection();
+      },
+
+      /**
+       * Enable dragging the bubble. On release it snaps to the nearest
+       * left/right edge; a simple click (no movement) toggles the window.
+       */
+      enableBubbleDrag: function() {
+        const bubble = this.elements.chatBubble;
+        const container = this.elements.container;
+        if (!bubble || !container) return;
+
+        let startX = null, startY = null, dragging = false, rafId = null;
+
+        bubble.addEventListener('pointerdown', (e) => {
+          startX = e.clientX;
+          startY = e.clientY;
+          dragging = false;
+          try { bubble.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        });
+
+        bubble.addEventListener('pointermove', (e) => {
+          if (startX === null) return;
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          if (!dragging && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+            dragging = true;
+            container.classList.add('shop-ai-bubble-dragging');
+          }
+          if (dragging) {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(() => this.moveBubbleTo(e.clientX, e.clientY));
+          }
+        });
+
+        const endDrag = (e) => {
+          if (startX === null) return;
+          try { bubble.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+          if (dragging) {
+            this.snapBubble();
+          } else {
+            this.toggleChatWindow();
+          }
+          startX = null;
+          startY = null;
+          dragging = false;
+          container.classList.remove('shop-ai-bubble-dragging');
+        };
+
+        bubble.addEventListener('pointerup', endDrag);
+        bubble.addEventListener('pointercancel', endDrag);
+      },
+
+      /**
+       * Position the container so the bubble follows the pointer.
+       */
+      moveBubbleTo: function(clientX, clientY) {
+        const container = this.elements.container;
+        const bubbleSize = this.elements.chatBubble.offsetWidth || 60;
+        const margin = 20;
+        const left = Math.max(margin, Math.min(clientX - bubbleSize / 2, window.innerWidth - bubbleSize - margin));
+        const bottom = Math.max(margin, Math.min(window.innerHeight - clientY - bubbleSize / 2, window.innerHeight - bubbleSize - margin));
+
+        container.style.left = left + 'px';
+        container.style.right = 'auto';
+        container.style.bottom = bottom + 'px';
+        container.classList.remove('side-left', 'side-right');
+
+        this.updateWindowDirection();
+      },
+
+      /**
+       * Snap the bubble to the nearest edge (left or right) and persist position.
+       */
+      snapBubble: function() {
+        const container = this.elements.container;
+        const rect = container.getBoundingClientRect();
+        const margin = 20;
+        const centerX = rect.left + rect.width / 2;
+        const side = centerX < window.innerWidth / 2 ? 'left' : 'right';
+        const bottom = Math.max(margin, window.innerHeight - rect.bottom);
+
+        container.style.left = '';
+        container.style.right = '';
+        if (side === 'left') {
+          container.style.left = margin + 'px';
+        } else {
+          container.style.right = margin + 'px';
+        }
+        container.style.bottom = bottom + 'px';
+        container.classList.remove('side-left', 'side-right');
+        container.classList.add('side-' + side);
+
+        sessionStorage.setItem('shopAiBubblePos', JSON.stringify({ side, bottom }));
+        this.updateWindowDirection();
+      },
+
+      /**
+       * Decide whether the chat window should open upward (default) or,
+       * when the bubble sits near the top of the viewport, downward so it
+       * stays on screen. Prefers whichever side has enough room for the window.
+       */
+      updateWindowDirection: function() {
+        const container = this.elements.container;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const gap = 20;
+        const spaceAbove = rect.top - gap;
+        const spaceBelow = window.innerHeight - rect.bottom - gap;
+        const need = Math.min(window.innerHeight * 0.7, 650);
+
+        let openDown;
+        if (spaceBelow >= need) {
+          openDown = true;       // plenty of room below → open downward
+        } else if (spaceAbove >= need) {
+          openDown = false;      // plenty of room above → open upward
+        } else {
+          openDown = spaceBelow >= spaceAbove; // open on the bigger side
+        }
+
+        if (openDown) {
+          container.classList.add('open-down');
+          const avail = Math.max(220, Math.min(spaceBelow, 650));
+          container.style.setProperty('--chat-avail', avail + 'px');
+        } else {
+          container.classList.remove('open-down');
+          container.style.removeProperty('--chat-avail');
+        }
+      },
+
+      /**
+       * Apply a persisted bubble position {side, bottom}.
+       */
+      applyBubblePosition: function(pos) {
+        const container = this.elements.container;
+        const margin = 20;
+        const bottom = Number.isFinite(pos.bottom) ? pos.bottom : margin;
+
+        container.style.bottom = bottom + 'px';
+        if (pos.side === 'left') {
+          container.style.left = margin + 'px';
+          container.style.right = '';
+          container.classList.add('side-left');
+        } else {
+          container.style.right = margin + 'px';
+          container.style.left = '';
+          container.classList.add('side-right');
+        }
+      },
+
+      /**
+       * Toggle the chat window between default and large size.
+       */
+      toggleResize: function() {
+        const chatWindow = this.elements.chatWindow;
+        if (!chatWindow) return;
+        const large = chatWindow.classList.toggle('large');
+        sessionStorage.setItem('shopAiWindowLarge', large ? '1' : '0');
+        this.scrollToBottom();
       },
 
       /**
@@ -673,17 +865,45 @@
             return;
           }
 
-          // Add messages to the UI - filter out tool results
+          // Add messages to the UI - keep only displayable chat text
           data.messages.forEach(message => {
-            try {
-              const messageContents = JSON.parse(message.content);
-              for (const contentBlock of messageContents) {
-                if (contentBlock.type === 'text') {
-                  ShopAIChat.Message.add(contentBlock.text, message.role, messagesContainer);
+            // Restore product cards saved as "product" messages
+            if (message.role === 'product') {
+              try {
+                const products = JSON.parse(message.content);
+                if (Array.isArray(products)) {
+                  ShopAIChat.UI.displayProductResults(products);
                 }
+              } catch (e) {
+                console.warn('[History] Skipping malformed product message');
+              }
+              return;
+            }
+
+            // Skip raw tool results (JSON from catalog/tool calls) — not chat text
+            if (message.role === 'tool') return;
+
+            let textToAdd = null;
+            try {
+              const parsed = JSON.parse(message.content);
+              if (Array.isArray(parsed)) {
+                textToAdd = parsed
+                  .filter(b => b && b.type === 'text' && typeof b.text === 'string')
+                  .map(b => b.text)
+                  .join('\n') || null;
+              } else if (typeof parsed === 'string') {
+                textToAdd = parsed;
+              } else if (parsed && typeof parsed === 'object') {
+                // Structured tool-call assistant message — no displayable text
+                textToAdd = null;
               }
             } catch (e) {
-              ShopAIChat.Message.add(message.content, message.role, messagesContainer);
+              // Plain text content (not JSON)
+              textToAdd = message.content;
+            }
+
+            if (textToAdd && textToAdd.trim()) {
+              ShopAIChat.Message.add(textToAdd, message.role, messagesContainer);
             }
           });
 
@@ -1044,6 +1264,8 @@
         formData.append('person_image', file);
         formData.append('product_image_url', product.image_url);
         if (product.title) formData.append('product_title', product.title);
+        var conversationId = sessionStorage.getItem('shopAiConversationId');
+        if (conversationId) formData.append('conversation_id', conversationId);
 
         var response = await fetch('https://localhost:3458/api/tryon/2d', {
           method: 'POST',
@@ -1137,10 +1359,14 @@
         ShopAIChat.Message.add('Generating 3D model from your try-on… (this can take up to a minute)', 'assistant', messagesContainer);
 
         try {
+          var payload = { image_url: imageUrl };
+          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          if (conversationId) payload.conversation_id = conversationId;
+
           var response = await fetch('https://localhost:3458/api/tryon/3d', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_url: imageUrl })
+            body: JSON.stringify(payload)
           });
           var data = await response.json();
           if (!response.ok || !data.ok) throw new Error(data.error || ('HTTP ' + response.status));

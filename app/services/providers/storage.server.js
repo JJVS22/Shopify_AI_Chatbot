@@ -52,6 +52,7 @@ export async function saveTryonResult(kind, buffer, extension, meta = {}) {
   return {
     id,
     kind,
+    fileName: filename,
     relativePath,
     absolutePath,
     publicUrl,
@@ -93,8 +94,35 @@ export function contentTypeForFilename(filename) {
   return map[ext] || "application/octet-stream";
 }
 
+/**
+ * Delete a saved try-on file by its relative path (e.g. "2d/<file>.jpg").
+ * Also removes the JSON sidecar. Safe to call for missing files.
+ * @param {string} relativePath
+ */
+export async function deleteTryonResultFile(relativePath) {
+  if (!relativePath || relativePath.includes("..")) return;
+  const full = path.join(resultsRoot(), relativePath);
+  const root = resultsRoot();
+  if (!full.startsWith(root)) return;
+
+  try {
+    await fs.unlink(full);
+    console.log(`[TryOnStorage] Deleted file: ${full}`);
+  } catch {
+    // ignore missing files
+  }
+
+  const metaPath = full.replace(/\.[^.]+$/, ".json");
+  try {
+    await fs.unlink(metaPath);
+  } catch {
+    // ignore
+  }
+}
+
 export default {
   saveTryonResult,
   resolveTryonResultFile,
   contentTypeForFilename,
+  deleteTryonResultFile,
 };
