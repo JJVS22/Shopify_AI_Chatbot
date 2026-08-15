@@ -152,6 +152,10 @@ function pickImageOutput(output) {
   return findImageValue(output, 0);
 }
 
+/**
+ * Heuristic: does this value look like an image/file output (URL, buffer,
+ * Blob, FileOutput, etc.)?
+ */
 function isFileLike(v) {
   if (v instanceof URL) return true;
   if (Buffer.isBuffer(v)) return true;
@@ -173,6 +177,10 @@ function isFileLike(v) {
   return false;
 }
 
+/**
+ * Depth-limited recursive search for the first file-like value in the model
+ * output, checking priority keys before falling back to a full scan.
+ */
 function findImageValue(value, depth) {
   if (depth > 6 || value == null) return null;
   if (isFileLike(value)) return value;
@@ -202,6 +210,9 @@ function findImageValue(value, depth) {
   return null;
 }
 
+/**
+ * Compact, log-safe summary of the raw model output.
+ */
 function summarizeOutput(output) {
   if (!output) return null;
   if (typeof output === "string") return output.slice(0, 300);

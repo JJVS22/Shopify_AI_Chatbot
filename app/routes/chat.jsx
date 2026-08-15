@@ -39,11 +39,17 @@ export async function action({ request }) {
   return handleChatRequest(request);
 }
 
+/**
+ * Return the persisted message history for a conversation.
+ */
 async function handleHistoryRequest(request, conversationId) {
   const messages = await getConversationHistory(conversationId);
   return new Response(JSON.stringify({ messages }), { headers: getCorsHeaders(request) });
 }
 
+/**
+ * Parse the incoming chat request and wrap a single chat session in an SSE stream.
+ */
 async function handleChatRequest(request) {
   try {
     const body = await request.json();
@@ -81,6 +87,11 @@ async function handleChatRequest(request) {
   }
 }
 
+/**
+ * Drive a single chat turn: connect to the MCP servers, run the LLM with tool
+ * calls in a bounded loop, execute try-on / MCP tools, and stream events back
+ * to the client (id, chunks, tool progress, try-on results, product cards).
+ */
 async function handleChatSession({
   request,
   userMessage,
@@ -329,6 +340,10 @@ async function buildStoreContext(mcpClient) {
   );
 }
 
+/**
+ * Rebuild the LLM message history from persisted DB messages, reconstructing
+ * assistant tool_calls and tool results from their JSON-encoded form.
+ */
 function buildConversationHistory(dbMessages) {
   const history = [];
 
@@ -367,6 +382,10 @@ function buildConversationHistory(dbMessages) {
   return history;
 }
 
+/**
+ * Resolve the customer account MCP/OpenID endpoints for a shop (cached in DB),
+ * using Shopify's well-known discovery URLs.
+ */
 async function getCustomerAccountUrls(shopDomain, conversationId) {
   try {
     const existingUrls = await getCustomerAccountUrlsFromDb(conversationId);
@@ -401,6 +420,9 @@ async function getCustomerAccountUrls(shopDomain, conversationId) {
   }
 }
 
+/**
+ * Build CORS response headers mirroring the request origin.
+ */
 function getCorsHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
   const requestHeaders = request.headers.get("Access-Control-Request-Headers") || "Content-Type, Accept";
@@ -414,6 +436,9 @@ function getCorsHeaders(request) {
   };
 }
 
+/**
+ * Build headers for a server-sent events (SSE) response.
+ */
 function getSseHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
 

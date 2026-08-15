@@ -3,10 +3,14 @@ import AppConfig from "./config.server";
 import systemPrompts from "../prompts/prompts.json";
 
 const deepseekClient = new OpenAI({
-  baseURL: "https://api.deepseek.com",
-  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: process.env.OPENCODE_GO_API_BASE_URL || "https://opencode.ai/zen/go/v1",
+  apiKey: process.env.OPENCODE_GO_API_KEY,
 });
 
+/**
+ * Resolve the system prompt content for a prompt type, falling back to the
+ * default prompt type when the requested one is missing.
+ */
 const getSystemPrompt = (promptType) => {
   return (
     systemPrompts.systemPrompts[promptType]?.content ||
@@ -16,6 +20,11 @@ const getSystemPrompt = (promptType) => {
 
 const MAX_TOOL_LOOP_ITERATIONS = 5;
 
+/**
+ * Build the OpenAI-compatible API payload. When tools are present, tool calling
+ * is enabled and reasoning/thinking is disabled (tool calls and reasoning
+ * tokens are incompatible); otherwise deep thinking is enabled.
+ */
 const buildApiPayload = (chatMessages, tools) => {
   const apiPayload = {
     model: AppConfig.api.defaultModel || "deepseek-v4-flash",
@@ -35,6 +44,10 @@ const buildApiPayload = (chatMessages, tools) => {
   return apiPayload;
 };
 
+/**
+ * Send a single (non-streaming) completion request and return the assistant
+ * message, injecting store context into the system prompt when available.
+ */
 const getCompletion = async ({ messages, promptType, tools, storeContext }) => {
   const systemInstruction = getSystemPrompt(promptType);
 
@@ -65,6 +78,11 @@ const getCompletion = async ({ messages, promptType, tools, storeContext }) => {
   return message;
 };
 
+/**
+ * Streaming facade. The underlying DeepSeek client is non-streaming, so this
+ * emits the full completion as a single text/message event, matching the shape
+ * expected by the shared streaming handlers.
+ */
 const streamConversation = async (
   { messages, promptType, tools, storeContext },
   streamHandlers

@@ -4,6 +4,9 @@ import { Buffer } from "node:buffer";
 
 let client = null;
 
+/**
+ * Lazily create and cache the Replicate SDK client.
+ */
 export function getReplicateClient() {
   if (client) return client;
 
@@ -65,6 +68,9 @@ export async function materializeReplicateFile(value) {
   return null;
 }
 
+/**
+ * Download a materialized Replicate output (URL or Buffer) into a Node Buffer.
+ */
 export async function downloadToBuffer(urlOrMaterialized) {
   if (!urlOrMaterialized) return null;
 

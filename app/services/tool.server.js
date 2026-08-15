@@ -1,7 +1,15 @@
 import { saveMessage } from "../db.server";
 import AppConfig from "./config.server";
 
+/**
+ * Create a tool service that handles MCP tool results: success/error handling,
+ * product search result parsing, and persisting tool messages to history.
+ */
 export function createToolService() {
+  /**
+   * Handle a failed MCP tool call: persist the error to conversation history
+   * and, if it requires customer authorization, notify the frontend.
+   */
   const handleToolError = async (toolUseResponse, toolName, toolUseId, conversationHistory, sendMessage, conversationId) => {
     if (toolUseResponse.error && toolUseResponse.error.type === "auth_required") {
       console.log("Auth required for tool:", toolName);
@@ -19,6 +27,11 @@ export function createToolService() {
     }
   };
 
+  /**
+   * Handle a successful MCP tool call: extract result text, add new products
+   * from a catalog search to the display list (deduplicating by id), and
+   * persist the result to conversation history.
+   */
   const handleToolSuccess = async (toolUseResponse, toolName, toolUseId, conversationHistory, productsToDisplay, conversationId, mcpClient) => {
     const resultText = extractToolResultText(toolUseResponse);
 
@@ -44,6 +57,9 @@ export function createToolService() {
     await addToolResultToHistory(conversationHistory, toolUseId, resultText, conversationId);
   };
 
+  /**
+   * Pull the human-readable text out of an MCP tool response (content[0].text).
+   */
   const extractToolResultText = (toolUseResponse) => {
     if (!toolUseResponse) return "No result";
     if (toolUseResponse.content && Array.isArray(toolUseResponse.content) && toolUseResponse.content.length > 0) {
@@ -52,6 +68,10 @@ export function createToolService() {
     return typeof toolUseResponse === "string" ? toolUseResponse : JSON.stringify(toolUseResponse);
   };
 
+  /**
+   * Parse a catalog search tool response into a normalized product list,
+   * resolving each product to a real storefront URL.
+   */
   const processProductSearchResult = async (toolUseResponse, mcpClient) => {
     try {
       console.log("[Tool] Processing product search result");
@@ -150,6 +170,10 @@ export function createToolService() {
     return ''; // unknown — no broken link
   };
 
+  /**
+   * Best-effort extraction of a product image URL from any of the many
+   * possible catalog response shapes.
+   */
   const extractProductImage = (product) => {
     if (product.image_url) return product.image_url;
     if (product.image?.src) return product.image.src;
@@ -175,6 +199,10 @@ export function createToolService() {
     return '';
   };
 
+  /**
+   * Extract the display price from a product, converting minor units (cents)
+   * to a formatted currency string.
+   */
   const extractProductPrice = (product) => {
     if (product.price_range) {
       const pr = product.price_range;
@@ -197,6 +225,9 @@ export function createToolService() {
     return 'Price not available';
   };
 
+  /**
+   * Extract the product description as plain text from string or rich-text shapes.
+   */
   const extractProductDescription = (product) => {
     if (!product.description) return '';
     if (typeof product.description === 'string') return product.description;
@@ -205,6 +236,10 @@ export function createToolService() {
     return '';
   };
 
+  /**
+   * Extract a storefront URL/handle from a product, falling back to a numeric
+   * product ID extracted from a Shopify GID.
+   */
   const extractProductUrl = (product) => {
     if (product.url) return product.url;
     if (product.online_store_url) return product.online_store_url;
@@ -216,6 +251,9 @@ export function createToolService() {
     return '';
   };
 
+  /**
+   * Normalize a raw product into the shape consumed by the frontend.
+   */
   const formatProductData = (product, resolvedUrl) => {
     return {
       id: product.product_id || product.id || `product-${Math.random().toString(36).substring(7)}`,
@@ -227,6 +265,9 @@ export function createToolService() {
     };
   };
 
+  /**
+   * Append a tool result message to the in-memory history and persist it.
+   */
   const addToolResultToHistory = async (conversationHistory, toolUseId, content, conversationId) => {
     const toolResultMessage = {
       role: "tool",

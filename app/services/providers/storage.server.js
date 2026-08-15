@@ -77,6 +77,9 @@ export function resolveTryonResultFile(kind, filename) {
   return absolutePath;
 }
 
+/**
+ * Map a file extension to its MIME type for serving stored try-on artifacts.
+ */
 export function contentTypeForFilename(filename) {
   const ext = path.extname(filename).toLowerCase();
   const map = {

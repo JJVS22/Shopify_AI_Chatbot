@@ -12,6 +12,11 @@ import {
  * High-level try-on orchestration used by HTTP routes and LLM tool handlers.
  */
 
+/**
+ * Run a 2D virtual try-on via the configured image-edit provider.
+ * Persists a result record (when a conversationId is given) and returns an
+ * enriched result with an absolute image URL and a human-readable message.
+ */
 export async function run2dTryon({
   personImage,
   productImage,
@@ -56,6 +61,11 @@ export async function run2dTryon({
   };
 }
 
+/**
+ * Run image-to-3D generation via the configured provider. Persists the GLB and
+ * preview video artifacts (when a conversationId is given) and links the 3D
+ * result back to its 2D source when the input image is a prior try-on URL.
+ */
 export async function run3dTryon({ image, conversationId }) {
   const provider = createImageTo3dProvider();
   const result = await provider.generate3d({ image });
@@ -165,10 +175,17 @@ export async function handleTryonToolCall(toolName, toolArgs, conversationId) {
   return { ok: false, error: `Unknown tryon tool: ${toolName}` };
 }
 
+/**
+ * Returns true when the given tool name is one of the built-in try-on tools.
+ */
 export function isTryonTool(name) {
   return name === "tryon_2d" || name === "tryon_3d";
 }
 
+/**
+ * Convert a relative public path (e.g. /api/tryon/results/...) into an absolute
+ * URL using the configured app URL; passes through existing absolute URLs.
+ */
 function toAbsoluteUrl(pathOrUrl) {
   if (!pathOrUrl) return null;
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
