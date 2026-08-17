@@ -27,3 +27,4 @@
 - 3D model not accurate
 - 3D model too dark in light
 - need a more complete, more functional website for testing
+- the usage of API key / token
