@@ -379,8 +379,9 @@
       /**
        * Display product results in the chat
        * @param {Array} products - Array of product data objects
+       * @param {string} [headerText] - Optional header text for the product section
        */
-      displayProductResults: function(products) {
+      displayProductResults: function(products, headerText) {
         const { messagesContainer } = this.elements;
 
         // Create a wrapper for the product section
@@ -391,7 +392,7 @@
         // Add a header for the product results
         const header = document.createElement('div');
         header.classList.add('shop-ai-product-header');
-        header.innerHTML = '<h4>Top Matching Products</h4>';
+        header.innerHTML = '<h4>' + (headerText || 'Top Matching Products') + '</h4>';
         productSection.appendChild(header);
 
         // Create the product grid container
@@ -778,7 +779,7 @@
             break;
 
           case 'product_results':
-            ShopAIChat.UI.displayProductResults(data.products);
+            ShopAIChat.UI.displayProductResults(data.products, data.header);
             break;
 
           case 'tryon_2d_result':
@@ -1059,10 +1060,12 @@
     Product: {
       /**
        * Create a product card element
-       * @param {Object} product - Product data
+       * @param {Object} product - Product data (may include `tryon_image_url` for pairing cards)
        * @returns {HTMLElement} Product card element
        */
       createCard: function(product) {
+        // Pairing cards carry the edited photo URL so we can offer "Try with this look".
+        const sourceTryonImageUrl = product.tryon_image_url;
         const card = document.createElement('div');
         card.classList.add('shop-ai-product-card');
 
@@ -1130,14 +1133,23 @@
 
         info.appendChild(button);
 
-        // Add try-on button
+        // Add try-on button (pairing cards use the edited photo as source)
         const tryonBtn = document.createElement('button');
         tryonBtn.classList.add('shop-ai-tryon-button');
-        tryonBtn.textContent = 'Try On';
-        tryonBtn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          ShopAIChat.TryOn.open(product);
-        });
+        if (sourceTryonImageUrl) {
+          tryonBtn.classList.add('shop-ai-tryon-pairing-button');
+          tryonBtn.textContent = 'Try with this look';
+          tryonBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            ShopAIChat.TryOn.runPairingTryon(product, sourceTryonImageUrl);
+          });
+        } else {
+          tryonBtn.textContent = 'Try On';
+          tryonBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            ShopAIChat.TryOn.open(product);
+          });
+        }
         info.appendChild(tryonBtn);
 
         card.appendChild(info);
@@ -1243,6 +1255,7 @@
           var cloudResult = await this.runCloud2dTryon(file);
           if (cloudResult && cloudResult.image_url) {
             this.displayResult(cloudResult.image_url, cloudResult.product_title, true);
+            this.fetchAndDisplayPairings(cloudResult);
           } else {
             ShopAIChat.Message.add('AI 2D try-on returned no result. Please try again.', 'assistant',
               ShopAIChat.UI.elements.messagesContainer);
@@ -1253,6 +1266,51 @@
             ShopAIChat.UI.elements.messagesContainer);
         } finally {
           this.closeUploadUI();
+        }
+      },
+
+      /**
+       * Fetch complementary product suggestions for a completed 2D try-on and
+       * render them below the result image with a "Try with this look" action.
+       * @param {Object} tryonResult - The result from /api/tryon/2d
+       */
+      fetchAndDisplayPairings: async function(tryonResult) {
+        if (!tryonResult || !tryonResult.image_url) return;
+
+        var productTitle = tryonResult.product_title || null;
+        if (!productTitle) return;
+
+        try {
+          var payload = {
+            source_image_url: tryonResult.image_url,
+            product_title: productTitle
+          };
+
+          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          if (conversationId) payload.conversation_id = conversationId;
+
+          var response = await fetch('https://localhost:3458/api/tryon/pairings', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Shop-Id': window.shopId || ''
+            },
+            body: JSON.stringify(payload)
+          });
+
+          var data = await response.json();
+          if (!response.ok || !data.ok) {
+            throw new Error(data.error || ('HTTP ' + response.status));
+          }
+
+          if (data.products && data.products.length > 0) {
+            ShopAIChat.UI.displayProductResults(
+              data.products,
+              'Pairs well with ' + (data.product_title || 'this item') + ' — tap "Try with this look"'
+            );
+          }
+        } catch (err) {
+          console.error('[TryOn] Failed to fetch pairing suggestions:', err);
         }
       },
 
@@ -1279,6 +1337,56 @@
 
         console.log('[TryOn] Cloud 2D result:', data.image_url);
         return data;
+      },
+
+      /**
+       * Run a 2D try-on using an existing edited photo as the source person image.
+       * Used for pairing suggestions (try suggested item with the look already created).
+       */
+      runPairingTryon: async function(product, sourceImageUrl) {
+        if (!product || !product.image_url || !sourceImageUrl) return;
+
+        var messagesContainer = ShopAIChat.UI.elements.messagesContainer;
+        ShopAIChat.Message.add('Pairing ' + product.title + ' with your look…', 'assistant', messagesContainer);
+
+        try {
+          // Fetch the edited result image so we can upload it as a file.
+          // This works for localhost and avoids Replicate being unable to reach private URLs.
+          var imageResponse = await fetch(sourceImageUrl);
+          if (!imageResponse.ok) {
+            throw new Error('Could not load the edited photo');
+          }
+          var imageBlob = await imageResponse.blob();
+          var personFile = new File([imageBlob], 'edited-look.jpg', { type: imageBlob.type || 'image/jpeg' });
+
+          var formData = new FormData();
+          formData.append('person_image', personFile);
+          formData.append('product_image_url', product.image_url);
+          if (product.title) formData.append('product_title', product.title);
+          formData.append('placement', 'pairing');
+
+          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          if (conversationId) formData.append('conversation_id', conversationId);
+
+          var response = await fetch('https://localhost:3458/api/tryon/2d', {
+            method: 'POST',
+            body: formData
+          });
+
+          var data = await response.json();
+          if (!response.ok || !data.ok) {
+            throw new Error(data.error || ('HTTP ' + response.status));
+          }
+
+          if (data.image_url) {
+            this.displayResult(data.image_url, product.title + ' with your look', true);
+          } else {
+            throw new Error('No image returned');
+          }
+        } catch (err) {
+          console.error('[TryOn] Pairing try-on failed:', err);
+          ShopAIChat.Message.add('Sorry, the pairing try-on failed: ' + err.message, 'assistant', messagesContainer);
+        }
       },
 
       showLoading: function() {

@@ -15,7 +15,9 @@ const PLACEMENT_PROMPTS = {
   holding:
     "Show the person holding the product from the second image naturally in their hands, as if they are holding it. Keep the person's identity, face, pose, and background unchanged. Realistic lighting and shadows.",
   wearing:
-    "Dress the person in the first image with the clothing/product from the second image. Keep the person's face, body pose, and background. Realistic fabric fit and lighting.",
+    "Identify the clothing/product from the second image. Dress the person in the first image with the clothing/product from the second image. Keep the person's face, body pose, and background. Realistic fabric fit and lighting. If the product is not wearable, place it naturally in the scene. Do when necessary: e.g. if the product is a pair of pants, pair it with a shirt or top to make it look natural, no need to be too flashy, apply to other products with similar logic. Analyze the size of the product, do not apply products based on person portion but the size of the product, keep in mind there are different sizes of products, choose a size of the product for the person in a natural way. Do not add any changes to the product itself, keep the product as it is.",
+  pairing:
+    "Complete the outfit in the first image by ADDING the product from the second image. The first image is an edited photo of a person who is already wearing another item — KEEP every existing clothing, accessory, and item already present in the first image exactly as it is. Do NOT remove, replace, cover, or alter anything already worn. Add the new product from the second image naturally alongside the existing items (e.g. add a top to existing pants, layer a jacket over an existing outfit, or add a bag/shoes to an existing look). Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.",
   next_to:
     "Place the product from the second image next to the person in the first image, standing beside them. Keep the person's identity, pose, and background unchanged. Realistic lighting and shadows.",
 };

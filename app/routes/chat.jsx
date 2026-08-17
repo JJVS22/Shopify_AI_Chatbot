@@ -13,6 +13,7 @@ import {
   getTryonOpenAiTools,
 } from "../services/providers/index";
 import { handleTryonToolCall, isTryonTool } from "../services/tryon.server";
+import { findPairingProducts } from "../services/pairings.server";
 
 export async function loader({ request }) {
   if (request.method === "OPTIONS") {
@@ -231,6 +232,14 @@ async function handleChatSession({
                 product_title: toolResult.product_title || null,
                 id: toolResult.id || null,
               });
+
+              await suggestPairingsAfterTryon({
+                productTitle: toolResult.product_title,
+                sourceTryonImageUrl: toolResult.image_url,
+                mcpClient,
+                stream,
+                conversationId,
+              });
             }
 
             if (toolResult.ok && toolName === "tryon_3d" && toolResult.viewer_url) {
@@ -338,6 +347,48 @@ async function buildStoreContext(mcpClient) {
     `Recommend ONLY products available in this store. Before suggesting products, ` +
     `confirm availability with the search_catalog tool.`
   );
+}
+
+/**
+ * After a successful 2D try-on, search the catalog for complementary products
+ * that pair well with the tried-on item. Streams them as regular product cards
+ * (via the proven `product_results` event) but tagged with the edited-result
+ * image URL so the frontend offers a "Try with this look" action that re-edits
+ * the photo with the suggested item.
+ */
+async function suggestPairingsAfterTryon({
+  productTitle,
+  sourceTryonImageUrl,
+  mcpClient,
+  stream,
+  conversationId,
+}) {
+  if (!sourceTryonImageUrl) return;
+
+  const pairings = await findPairingProducts({ productTitle, mcpClient });
+  if (pairings.length === 0) return;
+
+  // Tag each product with the edited photo URL so the frontend can show the
+  // "Try with this look" button (re-edit the photo with the suggested item).
+  for (const p of pairings) {
+    p.tryon_image_url = sourceTryonImageUrl;
+  }
+
+  stream.sendMessage({
+    type: "product_results",
+    header: productTitle
+      ? `Pairs well with ${productTitle} — tap "Try with this look"`
+      : `Pairs well with your look — tap "Try with this look"`,
+    products: pairings,
+  });
+
+  if (conversationId) {
+    try {
+      await saveMessage(conversationId, "product", JSON.stringify(pairings));
+    } catch (err) {
+      console.error("[Pairing] Failed to persist suggestion:", err.message);
+    }
+  }
 }
 
 /**

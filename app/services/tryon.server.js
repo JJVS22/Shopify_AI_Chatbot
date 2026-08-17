@@ -71,12 +71,15 @@ export async function run3dTryon({ image, conversationId }) {
   const result = await provider.generate3d({ image });
 
   let sourceResultId = null;
+  let sourceProductTitle = null;
   if (conversationId && image && typeof image === "string") {
     try {
       const src = await getTryOnResultByPublicUrl(image);
       sourceResultId = src?.id || null;
+      sourceProductTitle = src?.productTitle || null;
     } catch {
       sourceResultId = null;
+      sourceProductTitle = null;
     }
   }
 
@@ -119,6 +122,7 @@ export async function run3dTryon({ image, conversationId }) {
 
   return {
     ...result,
+    productTitle: sourceProductTitle,
     absoluteGlbUrl: toAbsoluteUrl(result.glbUrl),
     absolutePreviewVideoUrl: toAbsoluteUrl(result.previewVideoUrl),
     viewerUrl: result.glbUrl
@@ -168,6 +172,7 @@ export async function handleTryonToolCall(toolName, toolArgs, conversationId) {
       preview_video_url: result.absolutePreviewVideoUrl || result.previewVideoUrl,
       viewer_url: result.viewerUrl,
       id: result.id,
+      product_title: result.productTitle || null,
       message: result.message,
     };
   }
