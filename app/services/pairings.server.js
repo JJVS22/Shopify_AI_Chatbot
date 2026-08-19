@@ -84,11 +84,18 @@ export async function findPairingProducts({ productTitle, mcpClient, limit = 4 }
     const queries = await buildPairingQueries(productTitle);
     const excludedTitleLower = (productTitle || "").toLowerCase();
 
-    for (const query of queries.slice(0, 4)) {
-      if (pairings.length >= limit) break;
-      if (typeof query !== "string" || !query.trim()) continue;
+    const cleanQueries = queries
+      .slice(0, 4)
+      .filter((q) => typeof q === "string" && q.trim())
+      .map((q) => q.trim());
 
-      const products = await searchCatalogForPairings(mcpClient, toolService, query.trim());
+    // Run catalog searches in parallel to minimize perceived latency.
+    const results = await Promise.all(
+      cleanQueries.map((query) => searchCatalogForPairings(mcpClient, toolService, query))
+    );
+
+    for (const products of results) {
+      if (pairings.length >= limit) break;
       for (const product of products) {
         if (pairings.length >= limit) break;
         if (excludedTitleLower && product.title && product.title.toLowerCase().includes(excludedTitleLower)) continue;

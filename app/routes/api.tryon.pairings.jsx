@@ -46,6 +46,7 @@ export async function action({ request }) {
 
     for (const p of products) {
       p.tryon_image_url = sourceImageUrl;
+      p.tryon_product_title = productTitle || null;
     }
 
     return json({ ok: true, product_title: productTitle, products }, 200, request);

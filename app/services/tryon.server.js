@@ -23,13 +23,22 @@ export async function run2dTryon({
   prompt,
   productTitle,
   placement,
+  originalProductTitle,
   conversationId,
 }) {
   const provider = createImageEditProvider();
+
+  // When pairing a second item onto an already-edited photo, build a prompt that
+  // names both items and instructs natural layering so the first item is kept.
+  let effectivePrompt = prompt;
+  if (placement === "pairing" && originalProductTitle && productTitle) {
+    effectivePrompt = buildPairingPrompt(originalProductTitle, productTitle);
+  }
+
   const result = await provider.editImage({
     personImage,
     productImage,
-    prompt,
+    prompt: effectivePrompt,
     placement,
   });
 
@@ -196,6 +205,23 @@ function toAbsoluteUrl(pathOrUrl) {
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
   const base = AppConfig.tryon.appUrl;
   return `${base}${pathOrUrl.startsWith("/") ? pathOrUrl : "/" + pathOrUrl}`;
+}
+
+/**
+ * Build a pairing prompt that names both the already-worn item and the item
+ * being added, and instructs the model to layer them naturally while keeping
+ * the original item visible.
+ */
+function buildPairingPrompt(originalTitle, addedTitle) {
+  return (
+    `The first image shows a person who is already wearing a ${originalTitle}. ` +
+    `Add the ${addedTitle} from the second image so the person is wearing BOTH items together at the same time. ` +
+    `KEEP the ${originalTitle} exactly as it is — do NOT remove, replace, cover, or hide it. ` +
+    `Layer them in a natural order: if the ${addedTitle} is normally worn UNDER the ${originalTitle} ` +
+    `(for example a t-shirt under a vest or a shirt under a jacket), put it underneath so the ${originalTitle} stays visible on top; ` +
+    `if it is normally worn OVER the ${originalTitle}, layer it on top. ` +
+    `Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.`
+  );
 }
 
 export default {

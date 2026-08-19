@@ -369,9 +369,11 @@ async function suggestPairingsAfterTryon({
   if (pairings.length === 0) return;
 
   // Tag each product with the edited photo URL so the frontend can show the
-  // "Try with this look" button (re-edit the photo with the suggested item).
+  // "Try with this look" button (re-edit the photo with the suggested item),
+  // and with the original item title so the pairing prompt can layer correctly.
   for (const p of pairings) {
     p.tryon_image_url = sourceTryonImageUrl;
+    p.tryon_product_title = productTitle || null;
   }
 
   stream.sendMessage({
