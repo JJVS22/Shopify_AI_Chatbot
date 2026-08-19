@@ -371,3 +371,81 @@ export async function deleteConversations(conversationIds) {
     return 0;
   }
 }
+
+/**
+ * Create a support ticket (Layer 3 — human CS / merchant-gated).
+ * @param {object} data - { conversationId, type, summary, details?, customerName?, customerEmail?, orderRef?, callTime?, contactPhone? }
+ * @returns {Promise<Object>} The saved SupportTicket
+ */
+export async function createSupportTicket(data) {
+  const { conversationId, type, summary } = data;
+  if (!conversationId || !type || !summary) {
+    throw new Error('createSupportTicket requires conversationId, type, summary');
+  }
+
+  await createOrUpdateConversation(conversationId);
+
+  return await prisma.supportTicket.create({
+    data: {
+      conversationId,
+      type,
+      summary,
+      details: data.details || null,
+      customerName: data.customerName || null,
+      customerEmail: data.customerEmail || null,
+      orderRef: data.orderRef || null,
+      callTime: data.callTime ? new Date(data.callTime) : null,
+      contactPhone: data.contactPhone || null,
+    },
+  });
+}
+
+/**
+ * List support tickets (optionally filtered by status).
+ * @param {string} [status] - "open" | "in_progress" | "resolved" | "closed"
+ * @returns {Promise<Array>}
+ */
+export async function listSupportTickets(status) {
+  try {
+    return await prisma.supportTicket.findMany({
+      where: status ? { status } : {},
+      orderBy: { createdAt: 'desc' },
+    });
+  } catch (error) {
+    console.error('Error listing support tickets:', error);
+    return [];
+  }
+}
+
+/**
+ * Get cached shop metadata.
+ * @param {string} shopDomain
+ * @returns {Promise<Object|null>}
+ */
+export async function getShopMeta(shopDomain) {
+  try {
+    return await prisma.shopMeta.findUnique({ where: { id: shopDomain } });
+  } catch (error) {
+    console.error('Error getting shop meta:', error);
+    return null;
+  }
+}
+
+/**
+ * Upsert cached shop metadata.
+ * @param {string} shopDomain
+ * @param {object} data
+ * @returns {Promise<Object>}
+ */
+export async function upsertShopMeta(shopDomain, data) {
+  try {
+    return await prisma.shopMeta.upsert({
+      where: { id: shopDomain },
+      create: { id: shopDomain, ...data, updatedAt: new Date() },
+      update: { ...data, updatedAt: new Date() },
+    });
+  } catch (error) {
+    console.error('Error upserting shop meta:', error);
+    return null;
+  }
+}

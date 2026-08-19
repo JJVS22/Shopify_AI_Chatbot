@@ -57,6 +57,7 @@ model Conversation {
   id           String        @id
   messages     Message[]
   tryOnResults TryOnResult[]
+  supportTickets SupportTicket[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 }
@@ -100,4 +101,35 @@ model CustomerAccountUrls {
   tokenUrl         String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+}
+
+model SupportTicket {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  type           String // return | refund | cancel_order | modify_order | warranty | callback | escalation
+  status         String       @default("open") // open | in_progress | resolved | closed
+  summary        String
+  details        String? // JSON payload from the LLM/tool
+  customerName   String?
+  customerEmail  String?
+  orderRef       String?
+  callTime       DateTime? // schedule_callback
+  contactPhone   String? // schedule_callback
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([conversationId])
+  @@index([status])
+}
+
+model ShopMeta {
+  id        String   @id // shop domain
+  name      String?
+  email     String?
+  phone     String?
+  currency  String?
+  locale    String?
+  address   String? // JSON
+  updatedAt DateTime @updatedAt
 }

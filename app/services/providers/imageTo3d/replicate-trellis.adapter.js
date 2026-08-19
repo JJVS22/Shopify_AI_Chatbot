@@ -70,7 +70,7 @@ export function createTrellisAdapter() {
       generate_model: options.generate_model ?? true,
       randomize_seed: options.randomize_seed ?? true,
       generate_normal: options.generate_normal ?? false,
-      save_gaussian_ply: options.save_gaussian_ply ?? true,
+      save_gaussian_ply: options.save_gaussian_ply ?? false,
       ss_sampling_steps: options.ss_sampling_steps ?? 38,
       slat_sampling_steps: options.slat_sampling_steps ?? 12,
       return_no_background: options.return_no_background ?? false,
@@ -87,7 +87,6 @@ export function createTrellisAdapter() {
       id: null,
       glbUrl: null,
       previewVideoUrl: null,
-      gaussianPlyUrl: null,
       localGlbPath: null,
       provider: "replicate-trellis",
       model,
@@ -129,21 +128,6 @@ export function createTrellisAdapter() {
         result.videoFileName = saved.fileName;
         result.videoArtifact = "color_video";
         if (!result.id) result.id = saved.id;
-      }
-    }
-
-    if (output?.gaussian_ply) {
-      const mat = await materializeReplicateFile(output.gaussian_ply);
-      const buf = await downloadToBuffer(mat);
-      if (buf) {
-        const saved = await saveTryonResult("3d", buf, "ply", {
-          provider: "replicate-trellis",
-          model,
-          sourceImage: typeof image === "string" ? image : "[upload]",
-          artifact: "gaussian_ply",
-          relatedGlbId: result.id,
-        });
-        result.gaussianPlyUrl = saved.publicUrl;
       }
     }
 

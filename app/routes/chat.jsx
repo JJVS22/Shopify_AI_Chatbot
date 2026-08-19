@@ -13,6 +13,12 @@ import {
   getTryonOpenAiTools,
 } from "../services/providers/index";
 import { handleTryonToolCall, isTryonTool } from "../services/tryon.server";
+import { gateOpenAiTools } from "../services/layers/gateTools";
+import {
+  getCustomOpenAiTools,
+  handleCustomToolCall,
+  isCustomTool,
+} from "../services/providers/custom/tools";
 
 export async function loader({ request }) {
   if (request.method === "OPTIONS") {
@@ -139,10 +145,12 @@ async function handleChatSession({
 
     const mcpTools = mcpClient.tools.length > 0 ? mcpClient.getOpenAiTools() : [];
     const tryonTools = process.env.REPLICATE_API_TOKEN ? getTryonOpenAiTools() : [];
-    const openAiTools = [...mcpTools, ...tryonTools];
-    if (tryonTools.length > 0) {
-      console.log('[Chat] Try-on tools enabled:', tryonTools.map(t => t.function.name).join(', '));
-    }
+    const customTools = getCustomOpenAiTools();
+    const openAiTools = gateOpenAiTools([...mcpTools, ...customTools, ...tryonTools]);
+    console.log(
+      '[Chat] Tools registered for LLM:',
+      openAiTools.map(t => t.function.name).join(', ')
+    );
 
     let storeContext = null;
     try {
@@ -251,6 +259,52 @@ async function handleChatSession({
               conversationId
             );
           }
+          continue;
+        }
+
+        if (isCustomTool(toolName)) {
+          stream.sendMessage({
+            type: "tool_use",
+            tool_use_message: "Let me take care of that for you...",
+          });
+
+          const shopDomain = request.headers.get("Origin") || null;
+          const toolResult = await handleCustomToolCall(toolName, toolArgs, { conversationId, shopDomain });
+
+          await toolService.addToolResultToHistory(
+            conversationHistory,
+            toolCall.id,
+            JSON.stringify(toolResult),
+            conversationId
+          );
+
+          // Human CS handoff (Layer 3) — notify the frontend to switch modes.
+          if (toolResult.ok && toolResult.type === "human_support") {
+            stream.sendMessage({
+              type: "human_support",
+              message: toolResult.message || "Connecting you to a human agent...",
+              ticket_id: toolResult.ticket_id || null,
+              assistance_type: toolResult.assistance_type || null,
+            });
+          }
+
+          // Callback booking — frontend renders a fixed-question form.
+          if (toolResult.ok && toolResult.type === "callback_form") {
+            stream.sendMessage({
+              type: "callback_form",
+              message: toolResult.message || "",
+            });
+          }
+
+          // Cart updates — frontend shows "Continue to Shop" / "Check Out" buttons.
+          if (toolResult.ok && (toolResult.type === "cart" || toolResult.type === "cart_summary")) {
+            stream.sendMessage({
+              type: "cart_updated",
+              message: toolResult.message || "",
+              checkout_url: toolResult.checkout_url || null,
+            });
+          }
+
           continue;
         }
 

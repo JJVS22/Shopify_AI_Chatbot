@@ -556,6 +556,69 @@
     color: #5046e4;
   }
 
+  /* Stock badge on product cards */
+  .shop-ai-stock {
+    display: inline-block;
+    margin: 4px 0 8px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    align-self: flex-start;
+  }
+
+  .shop-ai-stock--in {
+    background: #e8f5e9;
+    color: #2e7d32;
+  }
+
+  .shop-ai-stock--out {
+    background: #fdecea;
+    color: #c62828;
+  }
+
+  /* Variant picker (size / color) on product cards */
+  .shop-ai-variant-picker {
+    margin: 6px 0 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .shop-ai-variant-opt {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .shop-ai-variant-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #666;
+  }
+
+  .shop-ai-variant-values {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .shop-ai-variant-value {
+    padding: 4px 10px;
+    border: 1px solid #ddd;
+    border-radius: 14px;
+    background: #fff;
+    color: #333;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .shop-ai-variant-value.active {
+    background: #5046e4;
+    border-color: #5046e4;
+    color: #fff;
+  }
+
   /* Add to Cart Button Styling */
   .shop-ai-add-to-cart {
     width: 100%;
@@ -850,3 +913,120 @@
       max-width: 95%;
     }
   }
+
+  /* Auth required card */
+  .shop-ai-auth-card {
+    align-self: flex-start;
+    margin: 8px 0;
+    max-width: 80%;
+    background: #fff;
+    border: 1px solid #eaeaea;
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+
+  .shop-ai-auth-card p {
+    margin: 0 0 10px;
+    font-size: 13px;
+    color: #555;
+  }
+
+  .shop-ai-login-btn {
+    display: block;
+    width: 100%;
+    padding: 9px 0;
+    background: #5046e4;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .shop-ai-login-btn:hover {
+    background: #3f36c0;
+  }
+
+  /* Cart update message (checkout link is styled by .shop-ai-message.assistant a) */
+
+  /* Callback booking form */
+  .shop-ai-callback-form {
+    align-self: flex-start;
+    margin: 8px 0;
+    max-width: 85%;
+    background: #fff;
+    border: 1px solid #eaeaea;
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .shop-ai-callback-intro {
+    margin: 0;
+    font-size: 13px;
+    color: #555;
+  }
+
+  .shop-ai-callback-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .shop-ai-callback-field span {
+    font-size: 12px;
+    font-weight: 600;
+    color: #666;
+  }
+
+  .shop-ai-callback-field input {
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 13px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .shop-ai-callback-field input:focus {
+    outline: none;
+    border-color: #5046e4;
+  }
+
+  .shop-ai-callback-submit {
+    padding: 9px 0;
+    background: #5046e4;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .shop-ai-callback-submit:hover {
+    background: #3f36c0;
+  }
+
+  .shop-ai-callback-submit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .shop-ai-callback-status {
+    margin: 0;
+    font-size: 12px;
+    color: #c62828;
+  }
+
+  @media (max-width: 480px) {
+    .shop-ai-callback-form {
+      max-width: 95%;
+    }
+  }
+

@@ -412,6 +412,164 @@
         }
 
         this.scrollToBottom();
+      },
+
+      /**
+       * Show a "Log in" card when customer authentication is required.
+       * @param {string} authUrl
+       * @param {HTMLElement} messagesContainer
+       */
+      displayAuthRequired: function(authUrl, messagesContainer) {
+        var card = document.createElement('div');
+        card.classList.add('shop-ai-auth-card');
+
+        var text = document.createElement('p');
+        text.textContent = 'This action requires you to log in to your customer account.';
+        card.appendChild(text);
+
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'shop-ai-login-btn';
+        btn.textContent = 'Log in to continue';
+        btn.addEventListener('click', function() {
+          ShopAIChat.Auth.openAuthPopup(authUrl);
+          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          if (conversationId) {
+            ShopAIChat.Auth.startTokenPolling(conversationId, messagesContainer);
+          }
+        });
+        card.appendChild(btn);
+
+        messagesContainer.appendChild(card);
+        this.scrollToBottom();
+      },
+
+      /**
+       * Show a cart-update message with a checkout link (no buttons).
+       * @param {Object} data - { message, checkout_url }
+       * @param {HTMLElement} messagesContainer
+       */
+      displayCartUpdated: function(data, messagesContainer) {
+        var el = document.createElement('div');
+        el.classList.add('shop-ai-message', 'assistant');
+
+        var txt = document.createTextNode((data.message || 'Your cart has been updated.') + ' — ');
+        el.appendChild(txt);
+
+        var a = document.createElement('a');
+        a.href = data.checkout_url || '/cart';
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = 'Proceed to checkout';
+        el.appendChild(a);
+
+        messagesContainer.appendChild(el);
+        this.scrollToBottom();
+      },
+
+      /**
+       * Show a callback booking form (fixed questions) so the customer does
+       * not have to type answers.
+       * @param {string} intro - Optional intro message
+       * @param {HTMLElement} messagesContainer
+       */
+      displayCallbackForm: function(intro, messagesContainer) {
+        var self = this;
+        var card = document.createElement('div');
+        card.classList.add('shop-ai-callback-form');
+
+        if (intro) {
+          var introP = document.createElement('p');
+          introP.classList.add('shop-ai-callback-intro');
+          introP.textContent = intro;
+          card.appendChild(introP);
+        }
+
+        function field(labelText, type, id, placeholder, required) {
+          var wrap = document.createElement('label');
+          wrap.classList.add('shop-ai-callback-field');
+
+          var label = document.createElement('span');
+          label.textContent = labelText;
+          wrap.appendChild(label);
+
+          var input = document.createElement('input');
+          input.type = type;
+          input.id = id;
+          input.placeholder = placeholder || '';
+          if (required) input.required = true;
+          wrap.appendChild(input);
+          card.appendChild(wrap);
+          return input;
+        }
+
+        field('Full name', 'text', 'shop-cb-name', 'e.g. Jane Doe', true);
+        field('Email', 'email', 'shop-cb-email', 'e.g. jane@example.com', false);
+        field('Phone', 'tel', 'shop-cb-phone', 'e.g. +1 555 000 1234', true);
+        field('Preferred date & time', 'datetime-local', 'shop-cb-time', '', true);
+        field('Reason (optional)', 'text', 'shop-cb-reason', 'e.g. Question about an order', false);
+
+        var submit = document.createElement('button');
+        submit.type = 'button';
+        submit.className = 'shop-ai-callback-submit';
+        submit.textContent = 'Request Callback';
+        card.appendChild(submit);
+
+        var status = document.createElement('p');
+        status.classList.add('shop-ai-callback-status');
+        status.style.display = 'none';
+        card.appendChild(status);
+
+        submit.addEventListener('click', function() {
+          var name = document.getElementById('shop-cb-name').value.trim();
+          var phone = document.getElementById('shop-cb-phone').value.trim();
+          var time = document.getElementById('shop-cb-time').value;
+
+          if (!name || !phone || !time) {
+            status.textContent = 'Please fill in your name, phone, and preferred date/time.';
+            status.style.display = 'block';
+            return;
+          }
+
+          submit.disabled = true;
+          submit.textContent = 'Scheduling...';
+
+          var payload = {
+            name: name,
+            email: document.getElementById('shop-cb-email').value.trim(),
+            phone: phone,
+            call_time: time,
+            reason: document.getElementById('shop-cb-reason').value.trim()
+          };
+          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          if (conversationId) payload.conversation_id = conversationId;
+
+          fetch('https://localhost:3458/api/tryon/callback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+              if (!data.ok) throw new Error(data.error || 'Failed to schedule callback');
+              card.innerHTML = '';
+              var ok = document.createElement('p');
+              ok.classList.add('shop-ai-callback-status');
+              ok.textContent = data.message || 'Callback scheduled. A support agent will contact you.';
+              card.appendChild(ok);
+              self.scrollToBottom();
+            })
+            .catch(function(err) {
+              console.error('Callback scheduling failed:', err);
+              submit.disabled = false;
+              submit.textContent = 'Request Callback';
+              status.textContent = 'Sorry, scheduling failed. Please try again.';
+              status.style.display = 'block';
+            });
+        });
+
+        messagesContainer.appendChild(card);
+        this.scrollToBottom();
       }
     },
 
@@ -775,6 +933,15 @@
           case 'auth_required':
             // Save the last user message for resuming after authentication
             sessionStorage.setItem('shopAiLastMessage', userMessage || '');
+
+            // Show a "Log in" button/link so the customer can authorize directly.
+            if (data.auth_url) {
+              ShopAIChat.UI.displayAuthRequired(data.auth_url, messagesContainer);
+            }
+            break;
+
+          case 'cart_updated':
+            ShopAIChat.UI.displayCartUpdated(data, messagesContainer);
             break;
 
           case 'product_results':
@@ -793,6 +960,14 @@
               ShopAIChat.TryOn.add3dLinkMessage(link);
               window.open(link, '_blank');
             }
+            break;
+
+          case 'human_support':
+            ShopAIChat.Message.add(data.message || 'Connecting you to a human agent...', 'assistant', messagesContainer);
+            break;
+
+          case 'callback_form':
+            ShopAIChat.UI.displayCallbackForm(data.message, messagesContainer);
             break;
 
           case 'tool_use':
@@ -919,12 +1094,11 @@
             messagesContainer.removeChild(loadingMessage);
           }
 
-          // Show error and welcome message
+          // Show error and welcome message. IMPORTANT: do NOT clear the
+          // conversation ID here — a transient fetch error shouldn't lose the
+          // customer's history. Keep it so the next page load retries.
           const welcomeMessage = window.shopChatConfig?.welcomeMessage || "👋 Hi there! How can I help you today?";
           ShopAIChat.Message.add(welcomeMessage, 'assistant', messagesContainer);
-
-          // Clear the conversation ID since we couldn't fetch this conversation
-          sessionStorage.removeItem('shopAiConversationId');
         }
       }
     },
@@ -1108,24 +1282,166 @@
         price.textContent = product.price;
         info.appendChild(price);
 
+        // Add stock badge (available: true | false | null=unknown)
+        if (product.available !== null && product.available !== undefined) {
+          const stock = document.createElement('span');
+          stock.classList.add('shop-ai-stock');
+          stock.classList.add(product.available ? 'shop-ai-stock--in' : 'shop-ai-stock--out');
+          stock.textContent = product.available ? 'In stock' : 'Out of stock';
+          info.appendChild(stock);
+        }
+
         // Add add-to-cart button
         const button = document.createElement('button');
         button.classList.add('shop-ai-add-to-cart');
         button.textContent = 'Add to Cart';
         button.dataset.productId = product.id;
 
-        // Add click handler for the button
-        button.addEventListener('click', function() {
-          // Send message to add this product to cart
-          const input = document.querySelector('.shop-ai-chat-input input');
-          if (input) {
-            input.value = `Add ${product.title} to my cart`;
-            // Trigger a click on the send button
-            const sendButton = document.querySelector('.shop-ai-chat-send');
-            if (sendButton) {
-              sendButton.click();
+        // ---- Variant picker (size / color etc.) derived from variants ----
+        const variants = Array.isArray(product.variants) ? product.variants : [];
+        const selected = {};
+        let selectedVariant = variants[0] || null;
+
+        function findMatchingVariant() {
+          if (variants.length === 0) return null;
+          const keys = Object.keys(selected);
+          if (keys.length === 0) return variants[0];
+          const match = variants.find(function(v) {
+            const vOpts = {};
+            (v.options || []).forEach(function(o) { if (o && o.name) vOpts[o.name] = o.value || o.label; });
+            return keys.every(function(k) { return selected[k] && vOpts[k] === selected[k]; });
+          });
+          return match || variants[0];
+        }
+
+        function variantLabel(v) {
+          if (!v) return '';
+          if (v.title && v.title !== 'Default Title') return v.title;
+          return '';
+        }
+
+        // Build option groups from the actual variants (robust to catalog format).
+        const optionNames = [];
+        const optionValues = {};
+        variants.forEach(function(v) {
+          (v.options || []).forEach(function(o) {
+            if (!o || !o.name) return;
+            const val = o.value || o.label;
+            if (!optionValues[o.name]) { optionValues[o.name] = []; optionNames.push(o.name); }
+            if (val && optionValues[o.name].indexOf(val) === -1) optionValues[o.name].push(val);
+          });
+        });
+        // Only show the picker when there is a real choice (an option with >1 value).
+        const hasRealOptions = optionNames.some(function(n) { return optionValues[n].length > 1; });
+
+        if (hasRealOptions) {
+          const picker = document.createElement('div');
+          picker.classList.add('shop-ai-variant-picker');
+
+          optionNames.forEach(function(name) {
+            const values = optionValues[name];
+            const block = document.createElement('div');
+            block.classList.add('shop-ai-variant-opt');
+
+            const label = document.createElement('span');
+            label.classList.add('shop-ai-variant-label');
+            label.textContent = name + ':';
+            block.appendChild(label);
+
+            const row = document.createElement('div');
+            row.classList.add('shop-ai-variant-values');
+
+            values.forEach(function(val) {
+              const vbtn = document.createElement('button');
+              vbtn.type = 'button';
+              vbtn.classList.add('shop-ai-variant-value');
+              vbtn.textContent = val;
+              vbtn.addEventListener('click', function() {
+                selected[name] = val;
+                selectedVariant = findMatchingVariant();
+                row.querySelectorAll('.shop-ai-variant-value').forEach(function(b) {
+                  b.classList.toggle('active', b.textContent === val);
+                });
+                const lbl = variantLabel(selectedVariant);
+                button.textContent = lbl ? 'Add to Cart (' + lbl + ')' : 'Add to Cart';
+              });
+              row.appendChild(vbtn);
+            });
+
+            block.appendChild(row);
+            picker.appendChild(block);
+          });
+
+          info.insertBefore(picker, button);
+        }
+
+        function buildCartAddedMessage(cart) {
+          const title = product.title || 'Product';
+          const vTitle = variantLabel(selectedVariant);
+          const lines = ['**' + title + '**' + (vTitle ? ' (' + vTitle + ')' : '') + ' has been added to your cart.'];
+          if (cart && Array.isArray(cart.items) && cart.items.length > 0) {
+            lines.push('\n**Your cart:**');
+            cart.items.forEach(function(it) {
+              const qty = it.quantity || 1;
+              const price = it.price != null ? (it.price / 100).toFixed(2) : null;
+              const cur = cart.currency || '';
+              const itTitle = it.product_title || it.title || 'Item';
+              const vt = it.variant_title && it.variant_title !== 'Default Title' ? ' (' + it.variant_title + ')' : '';
+              const priceStr = price != null ? (cur ? cur + ' ' : '') + price : '';
+              lines.push('- ' + itTitle + vt + ' × ' + qty + (priceStr ? ' — ' + priceStr : ''));
+            });
+            if (cart.total_price != null) {
+              lines.push('\n**Subtotal:** ' + (cart.currency ? cart.currency + ' ' : '') + (cart.total_price / 100).toFixed(2));
             }
+          } else if (cart && cart.items_count != null) {
+            lines.push('\nYour cart now has ' + cart.items_count + ' item(s).');
           }
+          lines.push('\n[Proceed to checkout](/cart)');
+          return lines.join('\n');
+        }
+
+        // Add click handler: adds the selected variant to the real storefront
+        // cart via Shopify's Ajax Cart API (/cart/add.js) on the same origin.
+        button.addEventListener('click', function() {
+          const messagesContainer = ShopAIChat.UI.elements.messagesContainer;
+          const variantId = (selectedVariant && selectedVariant.id) || product.variant_id;
+
+          if (!variantId) {
+            ShopAIChat.Message.add('This product has no selectable variant to add to cart.', 'assistant', messagesContainer);
+            return;
+          }
+
+          button.disabled = true;
+          button.textContent = 'Adding...';
+
+          fetch('/cart/add.js', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'id=' + encodeURIComponent(variantId) + '&quantity=1'
+          })
+            .then(function(response) {
+              if (!response.ok) {
+                return response.json().then(function(err) {
+                  throw new Error(err?.description || err?.message || ('HTTP ' + response.status));
+                });
+              }
+              return response.json();
+            })
+            .then(function(cart) {
+              button.disabled = false;
+              button.textContent = '✓ Added';
+              ShopAIChat.Message.add(buildCartAddedMessage(cart), 'assistant', messagesContainer);
+            })
+            .catch(function(err) {
+              console.error('Add to cart failed:', err);
+              button.disabled = false;
+              button.textContent = 'Add to Cart';
+              ShopAIChat.Message.add(
+                'Sorry, I couldn\'t add **' + product.title + '** to your cart. Please try again on the product page.',
+                'assistant',
+                messagesContainer
+              );
+            });
         });
 
         info.appendChild(button);

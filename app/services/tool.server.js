@@ -16,8 +16,17 @@ export function createToolService() {
       const errorText = typeof toolUseResponse.error.data === "string"
         ? toolUseResponse.error.data
         : JSON.stringify(toolUseResponse.error.data);
+
+      // Extract the authorization URL from the markdown link, if present,
+      // so the frontend can render a "Log in" button.
+      let authUrl = null;
+      if (typeof toolUseResponse.error.data === "string") {
+        const match = toolUseResponse.error.data.match(/\[([^\]]*)\]\(([^)]+)\)/);
+        if (match) authUrl = match[2];
+      }
+
       await addToolResultToHistory(conversationHistory, toolUseId, errorText, conversationId);
-      sendMessage({ type: 'auth_required' });
+      sendMessage({ type: 'auth_required', auth_url: authUrl });
     } else {
       console.log("Tool use error", toolUseResponse.error);
       const errorText = toolUseResponse.error
@@ -255,19 +264,57 @@ export function createToolService() {
    * Normalize a raw product into the shape consumed by the frontend.
    */
   const formatProductData = (product, resolvedUrl) => {
+    const variants = Array.isArray(product.variants) ? product.variants : [];
     return {
       id: product.product_id || product.id || `product-${Math.random().toString(36).substring(7)}`,
       title: product.title || 'Product',
       price: extractProductPrice(product),
       image_url: extractProductImage(product),
       description: extractProductDescription(product),
-      url: resolvedUrl !== undefined ? resolvedUrl : extractProductUrl(product)
+      url: resolvedUrl !== undefined ? resolvedUrl : extractProductUrl(product),
+      available: extractProductAvailability(product),
+      variant_id: extractProductVariantId(variants[0] || product),
+      options: Array.isArray(product.options)
+        ? product.options.map((o) => ({
+            name: o.name || 'Option',
+            values: Array.isArray(o.values) ? o.values : [],
+          }))
+        : [],
+      variants: variants.map((v) => ({
+        id: extractProductVariantId(v),
+        title: v.title || null,
+        options: Array.isArray(v.options)
+          ? v.options.map((o) => ({ name: o.name, value: o.label || o.value }))
+          : [],
+      })),
     };
   };
 
+<<<<<<< HEAD
   /**
    * Append a tool result message to the in-memory history and persist it.
    */
+=======
+  const extractProductVariantId = (productOrVariant) => {
+    const vid = productOrVariant?.variants?.[0]?.id
+      || productOrVariant?.variant_id
+      || productOrVariant?.id;
+    if (!vid) return null;
+    const m = String(vid).match(/gid:\/\/shopify\/ProductVariant\/(\d+)/);
+    return m ? m[1] : vid;
+  };
+
+  const extractProductAvailability = (product) => {
+    if (product.available != null) return product.available;
+    if (product.availability?.available != null) return product.availability.available;
+    if (product.variants?.[0]?.availability?.available != null) {
+      return product.variants[0].availability.available;
+    }
+    if (product.variants?.[0]?.available != null) return product.variants[0].available;
+    return null; // unknown
+  };
+
+>>>>>>> 1a1c3bb (CS / LLM update, with new tools and updated tools)
   const addToolResultToHistory = async (conversationHistory, toolUseId, content, conversationId) => {
     const toolResultMessage = {
       role: "tool",

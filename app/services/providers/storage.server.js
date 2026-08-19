@@ -13,13 +13,14 @@ async function ensureDir(dir) {
 
 /**
  * Save a try-on artifact under storage/tryon-results/{kind}/
+ * Only the actual file is written (metadata is stored in SQLite via TryOnResult).
  * @param {"2d"|"3d"} kind
  * @param {Buffer} buffer
  * @param {string} extension e.g. "jpg", "glb", "mp4"
  * @param {object} [meta]
- * @returns {Promise<{ id: string, kind: string, relativePath: string, absolutePath: string, publicUrl: string, metaPath: string }>}
+ * @returns {Promise<{ id: string, kind: string, relativePath: string, absolutePath: string, publicUrl: string }>}
  */
-export async function saveTryonResult(kind, buffer, extension, meta = {}) {
+export async function saveTryonResult(kind, buffer, extension) {
   if (kind !== "2d" && kind !== "3d") {
     throw new Error(`Invalid tryon kind: ${kind}`);
   }
@@ -35,18 +36,6 @@ export async function saveTryonResult(kind, buffer, extension, meta = {}) {
   const relativePath = path.join(kind, filename);
   const publicUrl = `${AppConfig.tryon.publicBasePath}/${kind}/${filename}`;
 
-  const metaPath = path.join(dir, `${id}.json`);
-  const metaPayload = {
-    id,
-    kind,
-    filename,
-    relativePath,
-    publicUrl,
-    createdAt: new Date().toISOString(),
-    ...meta,
-  };
-  await fs.writeFile(metaPath, JSON.stringify(metaPayload, null, 2), "utf8");
-
   console.log(`[TryOnStorage] Saved ${kind} result: ${absolutePath}`);
 
   return {
@@ -56,8 +45,6 @@ export async function saveTryonResult(kind, buffer, extension, meta = {}) {
     relativePath,
     absolutePath,
     publicUrl,
-    metaPath,
-    meta: metaPayload,
   };
 }
 
@@ -99,7 +86,7 @@ export function contentTypeForFilename(filename) {
 
 /**
  * Delete a saved try-on file by its relative path (e.g. "2d/<file>.jpg").
- * Also removes the JSON sidecar. Safe to call for missing files.
+ * Safe to call for missing files.
  * @param {string} relativePath
  */
 export async function deleteTryonResultFile(relativePath) {
@@ -113,13 +100,6 @@ export async function deleteTryonResultFile(relativePath) {
     console.log(`[TryOnStorage] Deleted file: ${full}`);
   } catch {
     // ignore missing files
-  }
-
-  const metaPath = full.replace(/\.[^.]+$/, ".json");
-  try {
-    await fs.unlink(metaPath);
-  } catch {
-    // ignore
   }
 }
 
