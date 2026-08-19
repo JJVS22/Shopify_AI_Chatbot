@@ -19,6 +19,7 @@ import {
   handleCustomToolCall,
   isCustomTool,
 } from "../services/providers/custom/tools";
+import { findPairingProducts } from "../services/pairings.server";
 
 export async function loader({ request }) {
   if (request.method === "OPTIONS") {
@@ -132,6 +133,11 @@ async function handleChatSession({
       } else {
         console.warn(`[MCP] WARNING: 0 tools loaded — tool calling will not work!`);
       }
+      // Debug: dump the schema of the catalog tools so we can verify arg shapes.
+      for (const name of [AppConfig.tools.productSearchName, 'get_product_details']) {
+        const t = mcpClient.storefrontTools.find((x) => x.name === name);
+        if (t) console.log(`[MCP] schema ${name}:`, JSON.stringify(t.input_schema));
+      }
     } catch (error) {
       console.warn('[MCP] Failed to connect to MCP servers, continuing without tools:', error.message);
     }
@@ -187,11 +193,6 @@ async function handleChatSession({
         break;
       }
 
-      stream.sendMessage({
-        type: "tool_use",
-        tool_use_message: "Looking up products for you..."
-      });
-
       conversationHistory.push({
         role: "assistant",
         content: null,
@@ -233,12 +234,31 @@ async function handleChatSession({
             );
 
             if (toolResult.ok && toolName === "tryon_2d" && toolResult.image_url) {
+              // Compute pairing suggestions BEFORE revealing the edited photo so
+              // the image and its pairing cards are output together.
+              const pairings = await collectPairingsAfterTryon({
+                productTitle: toolResult.product_title,
+                sourceTryonImageUrl: toolResult.image_url,
+                mcpClient,
+                conversationId,
+              });
+
               stream.sendMessage({
                 type: "tryon_2d_result",
                 image_url: toolResult.image_url,
                 product_title: toolResult.product_title || null,
                 id: toolResult.id || null,
               });
+
+              if (pairings.length > 0) {
+                stream.sendMessage({
+                  type: "product_results",
+                  header: toolResult.product_title
+                    ? `Pairs well with ${toolResult.product_title} — tap "Try with this look"`
+                    : `Pairs well with your look — tap "Try with this look"`,
+                  products: pairings,
+                });
+              }
             }
 
             if (toolResult.ok && toolName === "tryon_3d" && toolResult.viewer_url) {
@@ -309,6 +329,14 @@ async function handleChatSession({
         }
 
         try {
+          // Only surface a "looking up products" indicator for actual catalog searches.
+          if (toolName === AppConfig.tools.productSearchName) {
+            stream.sendMessage({
+              type: "tool_use",
+              tool_use_message: "Looking up products for you..."
+            });
+          }
+
           const toolResponse = await mcpClient.callTool(toolName, toolArgs);
 
           if (toolResponse.error) {
@@ -392,6 +420,42 @@ async function buildStoreContext(mcpClient) {
     `Recommend ONLY products available in this store. Before suggesting products, ` +
     `confirm availability with the search_catalog tool.`
   );
+}
+
+/**
+ * After a successful 2D try-on, search the catalog for complementary products
+ * that pair well with the tried-on item. Returns the tagged products (with
+ * `tryon_image_url` + `tryon_product_title`) so the caller can output them
+ * together with the edited photo. Also persists them as product cards.
+ */
+async function collectPairingsAfterTryon({
+  productTitle,
+  sourceTryonImageUrl,
+  mcpClient,
+  conversationId,
+}) {
+  if (!sourceTryonImageUrl) return [];
+
+  const pairings = await findPairingProducts({ productTitle, mcpClient });
+  if (pairings.length === 0) return [];
+
+  // Tag each product with the edited photo URL so the frontend can show the
+  // "Try with this look" button (re-edit the photo with the suggested item),
+  // and with the original item title so the pairing prompt can layer correctly.
+  for (const p of pairings) {
+    p.tryon_image_url = sourceTryonImageUrl;
+    p.tryon_product_title = productTitle || null;
+  }
+
+  if (conversationId) {
+    try {
+      await saveMessage(conversationId, "product", JSON.stringify(pairings));
+    } catch (err) {
+      console.error("[Pairing] Failed to persist suggestion:", err.message);
+    }
+  }
+
+  return pairings;
 }
 
 /**

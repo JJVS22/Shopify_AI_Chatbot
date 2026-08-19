@@ -23,13 +23,22 @@ export async function run2dTryon({
   prompt,
   productTitle,
   placement,
+  originalProductTitle,
   conversationId,
 }) {
   const provider = createImageEditProvider();
+
+  // When pairing a second item onto an already-edited photo, build a prompt that
+  // names both items and instructs natural layering so the first item is kept.
+  let effectivePrompt = prompt;
+  if (placement === "pairing" && originalProductTitle && productTitle) {
+    effectivePrompt = buildPairingPrompt(originalProductTitle, productTitle);
+  }
+
   const result = await provider.editImage({
     personImage,
     productImage,
-    prompt,
+    prompt: effectivePrompt,
     placement,
   });
 
@@ -71,12 +80,15 @@ export async function run3dTryon({ image, conversationId }) {
   const result = await provider.generate3d({ image });
 
   let sourceResultId = null;
+  let sourceProductTitle = null;
   if (conversationId && image && typeof image === "string") {
     try {
       const src = await getTryOnResultByPublicUrl(image);
       sourceResultId = src?.id || null;
+      sourceProductTitle = src?.productTitle || null;
     } catch {
       sourceResultId = null;
+      sourceProductTitle = null;
     }
   }
 
@@ -119,6 +131,7 @@ export async function run3dTryon({ image, conversationId }) {
 
   return {
     ...result,
+    productTitle: sourceProductTitle,
     absoluteGlbUrl: toAbsoluteUrl(result.glbUrl),
     absolutePreviewVideoUrl: toAbsoluteUrl(result.previewVideoUrl),
     viewerUrl: result.glbUrl
@@ -168,6 +181,7 @@ export async function handleTryonToolCall(toolName, toolArgs, conversationId) {
       preview_video_url: result.absolutePreviewVideoUrl || result.previewVideoUrl,
       viewer_url: result.viewerUrl,
       id: result.id,
+      product_title: result.productTitle || null,
       message: result.message,
     };
   }
@@ -191,6 +205,74 @@ function toAbsoluteUrl(pathOrUrl) {
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
   const base = AppConfig.tryon.appUrl;
   return `${base}${pathOrUrl.startsWith("/") ? pathOrUrl : "/" + pathOrUrl}`;
+}
+
+/**
+ * Keyword lists used to infer the correct layering order between two garments.
+ */
+const OUTER_LAYERS = [
+  "vest", "jacket", "coat", "blazer", "cardigan", "hoodie", "sweater",
+  "sweatshirt", "parka", "puffer", "windbreaker", "overcoat", "shacket",
+  "blouson", "bomber", "trench",
+];
+
+const INNER_LAYERS = [
+  "t-shirt", "t shirt", "tshirt", "shirt", "tee", "top", "tank",
+  "undershirt", "blouse", "polo", "henley", "base layer", "baselayer",
+  "camisole", "vest top",
+];
+
+/**
+ * Decide whether the added item goes under or over the original item.
+ * Returns "under", "over", or "alongside" (different body regions).
+ */
+function inferLayerOrder(originalTitle, addedTitle) {
+  const original = (originalTitle || "").toLowerCase();
+  const added = (addedTitle || "").toLowerCase();
+  const oOuter = OUTER_LAYERS.some((k) => original.includes(k));
+  const oInner = INNER_LAYERS.some((k) => original.includes(k));
+  const aOuter = OUTER_LAYERS.some((k) => added.includes(k));
+  const aInner = INNER_LAYERS.some((k) => added.includes(k));
+
+  if (oOuter && aInner) return "under"; // e.g. vest + t-shirt
+  if (oInner && aOuter) return "over";  // e.g. t-shirt + jacket
+  return "alongside"; // e.g. pants + shirt (different regions)
+}
+
+/**
+ * Build a pairing prompt that names both the already-worn item and the item
+ * being added, and instructs the model to keep the original item while layering
+ * the new one in the correct order.
+ */
+function buildPairingPrompt(originalTitle, addedTitle) {
+  const order = inferLayerOrder(originalTitle, addedTitle);
+
+  const base =
+    `The first image shows a person who is already wearing a ${originalTitle}. ` +
+    `Now add the ${addedTitle} from the second image so the person is wearing BOTH items together at the same time. ` +
+    `KEEP the ${originalTitle} exactly as it is — do NOT remove, replace, cover, or hide it. ` +
+    `Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.`;
+
+  if (order === "under") {
+    return (
+      base +
+      ` Put the ${addedTitle} UNDERNEATH the ${originalTitle} so the ${originalTitle} remains fully visible on top; ` +
+      `only a small part of the ${addedTitle} (e.g. neckline, hem, or sleeves) should peek out from under the ${originalTitle}.`
+    );
+  }
+
+  if (order === "over") {
+    return (
+      base +
+      ` Layer the ${addedTitle} OVER the ${originalTitle} so the ${originalTitle} still shows underneath.`
+    );
+  }
+
+  return (
+    base +
+    ` Add the ${addedTitle} on a different part of the body from the ${originalTitle} (they do not overlap), ` +
+    `so both items are clearly visible together.`
+  );
 }
 
 export default {

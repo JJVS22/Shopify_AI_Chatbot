@@ -6,6 +6,10 @@ import AppConfig from "./config.server";
  * product search result parsing, and persisting tool messages to history.
  */
 export function createToolService() {
+  // Once get_product_details is confirmed to be returning non-JSON errors, stop
+  // calling it for the rest of this service's lifetime to avoid slow, noisy retries.
+  let detailsResolveBroken = false;
+
   /**
    * Handle a failed MCP tool call: persist the error to conversation history
    * and, if it requires customer authorization, notify the frontend.
@@ -99,6 +103,12 @@ export function createToolService() {
           }
 
           console.log(`[Tool] Parsed response keys:`, Object.keys(responseData || {}));
+          if (responseData?.instructions) {
+            console.log(`[Tool] instructions:`, JSON.stringify(responseData.instructions));
+          }
+          if (responseData?.messages) {
+            console.log(`[Tool] messages:`, JSON.stringify(responseData.messages));
+          }
 
           if (responseData?.products && Array.isArray(responseData.products)) {
             console.log(`[Tool] Found ${responseData.products.length} products in response`);
@@ -154,18 +164,38 @@ export function createToolService() {
     }
 
     // Try to get the real handle/URL via get_product_details
-    if (mcpClient && (product.id || product.product_id)) {
+    if (!detailsResolveBroken && mcpClient && (product.id || product.product_id)) {
       const gid = product.id || product.product_id;
+      const numericId = String(gid).replace(/^gid:\/\/shopify\/Product\//, '');
       const attempts = [
         { product_id: gid },
         { catalog: { product_id: gid } },
+        { product_id: numericId },
+        { id: gid },
+        { catalog: { id: gid } },
       ];
       for (const args of attempts) {
         try {
           const res = await mcpClient.callTool('get_product_details', args);
           const text = res?.content?.[0]?.text;
+
+          // Some MCP servers return an error string (e.g. "Missing required ...")
+          // instead of JSON. Log it fully and move on rather than crashing.
           if (!text) continue;
-          const data = typeof text === 'string' ? JSON.parse(text) : text;
+          if (typeof text !== 'string') {
+            const obj = text?.product || text?.products?.[0] || text;
+            const url = obj?.url || obj?.onlineStoreUrl || obj?.online_store_url;
+            if (url && /^https?:\/\//i.test(String(url))) return String(url);
+            if (obj?.handle) return `/products/${obj.handle}`;
+            continue;
+          }
+          const trimmed = text.trim();
+          if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+            console.warn('[Tool] get_product_details non-JSON response:', trimmed.slice(0, 200));
+            detailsResolveBroken = true;
+            break;
+          }
+          const data = JSON.parse(trimmed);
           const detail = data?.product || data?.products?.[0] || data;
           const url = detail?.url || detail?.onlineStoreUrl || detail?.online_store_url;
           if (url && /^https?:\/\//i.test(String(url))) return String(url);
@@ -268,6 +298,7 @@ export function createToolService() {
     return {
       id: product.product_id || product.id || `product-${Math.random().toString(36).substring(7)}`,
       title: product.title || 'Product',
+      handle: product.handle || null,
       price: extractProductPrice(product),
       image_url: extractProductImage(product),
       description: extractProductDescription(product),
@@ -290,11 +321,6 @@ export function createToolService() {
     };
   };
 
-<<<<<<< HEAD
-  /**
-   * Append a tool result message to the in-memory history and persist it.
-   */
-=======
   const extractProductVariantId = (productOrVariant) => {
     const vid = productOrVariant?.variants?.[0]?.id
       || productOrVariant?.variant_id
@@ -314,7 +340,9 @@ export function createToolService() {
     return null; // unknown
   };
 
->>>>>>> 1a1c3bb (CS / LLM update, with new tools and updated tools)
+  /**
+   * Append a tool result message to the in-memory history and persist it.
+   */
   const addToolResultToHistory = async (conversationHistory, toolUseId, content, conversationId) => {
     const toolResultMessage = {
       role: "tool",

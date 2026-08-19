@@ -15,7 +15,9 @@ const PLACEMENT_PROMPTS = {
   holding:
     "Show the person holding the product from the second image naturally in their hands, as if they are holding it. Keep the person's identity, face, pose, and background unchanged. Realistic lighting and shadows.",
   wearing:
-    "Dress the person in the first image with the clothing/product from the second image. Keep the person's face, body pose, and background. Realistic fabric fit and lighting.",
+    "Dress the person in the first image with ONLY the single product shown in the second image. Do NOT add any extra clothing, accessories, or other items that are not present in the second image. Keep the person's face, body pose, and background unchanged. Fit the product to the person naturally and realistically; do not alter the product itself. Realistic fabric fit and lighting.",
+  pairing:
+    "Complete the outfit in the first image by ADDING the product from the second image. The first image is an edited photo of a person who is already wearing another item — KEEP every existing clothing, accessory, and item already present in the first image exactly as it is. Do NOT remove, replace, cover, or alter anything already worn. Add the new product from the second image naturally alongside the existing items (e.g. add a top to existing pants, layer a jacket over an existing outfit, or add a bag/shoes to an existing look). Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.",
   next_to:
     "Place the product from the second image next to the person in the first image, standing beside them. Keep the person's identity, pose, and background unchanged. Realistic lighting and shadows.",
 };

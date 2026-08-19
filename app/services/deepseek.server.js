@@ -27,7 +27,7 @@ const MAX_TOOL_LOOP_ITERATIONS = 5;
  */
 const buildApiPayload = (chatMessages, tools) => {
   const apiPayload = {
-    model: AppConfig.api.defaultModel || "deepseek-v4-flash",
+    model: AppConfig.api.defaultModel || "mimo-v2.5",
     messages: chatMessages,
     max_tokens: 1000,
   };

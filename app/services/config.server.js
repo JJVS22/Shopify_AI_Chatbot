@@ -1,6 +1,6 @@
 export const AppConfig = {
   api: {
-    defaultModel: "deepseek-v4-flash",
+    defaultModel: "mimo-v2.5",
     maxTokens: 512,
     defaultPromptType: "standardAssistant",
   },
@@ -18,7 +18,7 @@ export const AppConfig = {
 
   tools: {
     productSearchName: "search_catalog",
-    maxProductsToDisplay: 3,
+    maxProductsToDisplay: 10,
   },
 
   providers: {

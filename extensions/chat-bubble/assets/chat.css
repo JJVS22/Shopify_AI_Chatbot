@@ -746,6 +746,18 @@
     color: white;
   }
 
+  /* Pairing "Try with this look" button */
+  .shop-ai-tryon-pairing-button {
+    background-color: #5046e4;
+    color: white;
+    border: 1.5px solid #5046e4;
+  }
+
+  .shop-ai-tryon-pairing-button:hover {
+    background-color: #3f36c0;
+    border-color: #3f36c0;
+  }
+
   /* Try-On Upload Overlay */
   .shop-ai-tryon-overlay {
     position: fixed;
