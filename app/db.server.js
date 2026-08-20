@@ -418,6 +418,95 @@ export async function listSupportTickets(status) {
 }
 
 /**
+ * Update a support ticket's status (merchant action).
+ * @param {string} id
+ * @param {string} status - "open" | "in_progress" | "resolved" | "closed"
+ * @returns {Promise<Object|null>} Updated ticket or null if not found
+ */
+export async function updateSupportTicketStatus(id, status) {
+  try {
+    return await prisma.supportTicket.update({
+      where: { id },
+      data: { status, updatedAt: new Date() },
+    });
+  } catch (error) {
+    console.error('Error updating support ticket:', error);
+    return null;
+  }
+}
+
+/**
+ * Delete a support ticket (merchant action).
+ * @param {string} id
+ * @returns {Promise<boolean>} true if a ticket was deleted
+ */
+export async function deleteSupportTicket(id) {
+  try {
+    const result = await prisma.supportTicket.delete({ where: { id } });
+    return Boolean(result);
+  } catch (error) {
+    console.error('Error deleting support ticket:', error);
+    return false;
+  }
+}
+
+/**
+ * Get the most recent customer-uploaded image URL for a conversation.
+ * Uploaded images are stored as messages with role "user_image".
+ * @param {string} conversationId
+ * @returns {Promise<string|null>}
+ */
+export async function getLatestUploadedImage(conversationId) {
+  try {
+    const message = await prisma.message.findFirst({
+      where: { conversationId, role: "user_image" },
+      orderBy: { createdAt: "desc" },
+    });
+    return message?.content || null;
+  } catch (error) {
+    console.error("Error getting latest uploaded image:", error);
+    return null;
+  }
+}
+
+/**
+ * Get the persisted guest cart id for a conversation ("" if none yet).
+ * @param {string} conversationId
+ * @returns {Promise<string|null>}
+ */
+export async function getCartId(conversationId) {
+  try {
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { cartId: true },
+    });
+    return conversation?.cartId || null;
+  } catch (error) {
+    console.error('Error getting cart id:', error);
+    return null;
+  }
+}
+
+/**
+ * Persist the guest cart id for a conversation so the same cart is reused
+ * across turns (add_to_cart → get_cart_summary → checkout).
+ * @param {string} conversationId
+ * @param {string} cartId
+ * @returns {Promise<void>}
+ */
+export async function setCartId(conversationId, cartId) {
+  try {
+    await createOrUpdateConversation(conversationId);
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { cartId, updatedAt: new Date() },
+    });
+  } catch (error) {
+    console.error('Error saving cart id:', error);
+  }
+}
+
+/**
  * Get cached shop metadata.
  * @param {string} shopDomain
  * @returns {Promise<Object|null>}

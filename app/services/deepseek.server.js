@@ -3,8 +3,8 @@ import AppConfig from "./config.server";
 import systemPrompts from "../prompts/prompts.json";
 
 const deepseekClient = new OpenAI({
-  baseURL: process.env.OPENCODE_GO_API_BASE_URL || "https://opencode.ai/zen/go/v1",
-  apiKey: process.env.OPENCODE_GO_API_KEY,
+  baseURL: process.env.DEEPSEEK_API_BASE_URL || "https://api.deepseek.com/v1",
+  apiKey: process.env.DEEPSEEK_API_KEY,
 });
 
 /**
@@ -22,12 +22,12 @@ const MAX_TOOL_LOOP_ITERATIONS = 5;
 
 /**
  * Build the OpenAI-compatible API payload. When tools are present, tool calling
- * is enabled and reasoning/thinking is disabled (tool calls and reasoning
- * tokens are incompatible); otherwise deep thinking is enabled.
+ * is enabled; otherwise a normal chat completion is used. DeepSeek's API does
+ * not support the `thinking`/`reasoning_effort` params used by the mimo model.
  */
 const buildApiPayload = (chatMessages, tools) => {
   const apiPayload = {
-    model: AppConfig.api.defaultModel || "mimo-v2.5",
+    model: AppConfig.api.defaultModel || "deepseek-chat",
     messages: chatMessages,
     max_tokens: 1000,
   };
@@ -35,10 +35,6 @@ const buildApiPayload = (chatMessages, tools) => {
   if (tools && tools.length > 0) {
     apiPayload.tools = tools;
     apiPayload.tool_choice = "auto";
-    apiPayload.thinking = { type: "disabled" };
-  } else {
-    apiPayload.thinking = { type: "enabled" };
-    apiPayload.reasoning_effort = "low";
   }
 
   return apiPayload;

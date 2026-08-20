@@ -1,14 +1,13 @@
 /**
  * Tool Layers — customer service split.
  *
- * Structure: layers primary, origin secondary.
- * Every tool belongs to one of 3 layers and has an origin:
- *   origin = "storefront" (Shopify storefront MCP) | "customer" (Shopify customer MCP) | "custom" (ours)
+ * This app intentionally does NOT use customer-account authentication. Only
+ * tools that need NO login are exposed:
+ *   layer1 = no auth, fully automatic (catalog, cart, try-on, store info)
+ *   layer3 = human CS / merchant-gated (creates SupportTickets, never auto-acts)
  *
- * Layer semantics:
- *   layer1 = no auth, fully automatic
- *   layer2 = customer auth required (auth-on-demand popup, strategy (a))
- *   layer3 = real human CS / merchant-gated (creates SupportTickets, never auto-acts)
+ * Customer-account (layer 2) tools — orders, wishlist, store credit, customer
+ * profile, discount codes — are intentionally NOT exposed.
  */
 
 export const TOOL_LAYERS = {
@@ -25,31 +24,14 @@ export const TOOL_LAYERS = {
       { name: "get_shipping_estimate", origin: "custom", note: "Best-effort shipping estimate from policies" },
       { name: "get_featured_or_new_products", origin: "custom", note: "Curated featured/new listing (wraps search_catalog)" },
       { name: "get_product_availability", origin: "custom", note: "Stock status for a product/variant" },
-      { name: "add_to_cart", origin: "custom", note: "Add item to anonymous cart (no auth)" },
-      { name: "remove_from_cart", origin: "custom", note: "Remove item from anonymous cart" },
-      { name: "get_cart_summary", origin: "custom", note: "Current anonymous cart: items, totals" },
-      { name: "get_checkout_url", origin: "custom", note: "Checkout URL → rendered as a Checkout button (guest checkout allowed)" },
+      { name: "add_to_cart", origin: "custom", note: "Add item to a guest cart via storefront MCP (no auth)" },
+      { name: "remove_from_cart", origin: "custom", note: "Remove item from the guest cart" },
+      { name: "get_cart_summary", origin: "custom", note: "Current guest cart: items, totals, checkout URL" },
+      { name: "get_checkout_url", origin: "custom", note: "Checkout URL → rendered as a Checkout button (guest checkout)" },
 
       // Custom tools — try-on (no auth)
       { name: "tryon_2d", origin: "custom", note: "2D virtual try-on via Replicate" },
       { name: "tryon_3d", origin: "custom", note: "Image → 3D model via Replicate" },
-    ],
-  },
-
-  layer2: {
-    label: "Customer auth required (auth-on-demand)",
-    tools: [
-      { name: "apply_discount_code", origin: "custom", note: "Apply/remove discount code on cart" },
-      { name: "get_cart", origin: "customer", note: "Auth cart read (existing MCP)" },
-      { name: "update_cart", origin: "customer", note: "Auth cart update (existing MCP)" },
-      { name: "get_most_recent_order_status", origin: "customer", note: "Last placed order status (existing MCP)" },
-      { name: "get_order_details", origin: "custom", note: "Order details by id (wrapper)" },
-      { name: "get_order_history", origin: "custom", note: "List of past orders (wrapper; wire later)" },
-      { name: "track_shipment", origin: "custom", note: "Shipping/fulfillment tracking (wrapper; wire later)" },
-      { name: "get_store_credit_balances", origin: "customer", note: "Store-credit balance(s) (existing MCP)" },
-      { name: "get_customer_profile", origin: "custom", note: "Name + email; addresses only on demand" },
-      { name: "get_wishlist", origin: "custom", note: "Wishlist read (wrapper; wire later)" },
-      { name: "add_to_wishlist", origin: "custom", note: "Wishlist add (wrapper; wire later)" },
     ],
   },
 
@@ -61,26 +43,19 @@ export const TOOL_LAYERS = {
       { name: "request_after_sale_assistance", origin: "custom", note: "Combined return/refund/cancel/modify/warranty → ticket" },
       { name: "create_support_ticket", origin: "custom", note: "Generic support ticket" },
       { name: "schedule_callback", origin: "custom", note: "Book a human callback (date/time + contact) → ticket" },
-      // MCP tools we intentionally DO NOT auto-expose (would auto-trigger merchant actions).
-      { name: "request_return", origin: "customer", note: "EXCLUDED — folded into request_after_sale_assistance" },
     ],
   },
 };
 
 /**
  * Tool names that are safe to expose to the LLM:
- *   Layer 1 + Layer 2 tools,
- *   plus the Layer 3 handoff tools (they only create tickets).
- * Excludes MCP tools that would auto-trigger merchant actions (e.g. request_return).
+ *   All Layer 1 tools (no auth) + the Layer 3 handoff tools (ticket creation only).
+ * Customer-account tools (orders, wishlist, profile, store credit, discounts)
+ * are intentionally excluded.
  */
 export const ALLOWED_TOOL_NAMES = new Set([
   ...TOOL_LAYERS.layer1.tools.map((t) => t.name),
-  ...TOOL_LAYERS.layer2.tools.map((t) => t.name),
-  // Layer 3 handoff tools that are safe (ticket creation only):
-  "escalate_to_human",
-  "request_after_sale_assistance",
-  "create_support_ticket",
-  "schedule_callback",
+  ...TOOL_LAYERS.layer3.tools.map((t) => t.name),
 ]);
 
 /** Origin lookup for a tool name (for logging / docs). */

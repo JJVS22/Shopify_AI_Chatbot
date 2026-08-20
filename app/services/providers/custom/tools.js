@@ -1,4 +1,4 @@
-import { addToCart, removeFromCart, getCartSummary, getCheckoutUrl, applyDiscountCode } from "./cart.server";
+import { addToCart, removeFromCart, getCartSummary, getCheckoutUrl } from "./cart.server";
 import { getStoreInfo } from "./store-info.server";
 import {
   escalateToHuman,
@@ -11,6 +11,50 @@ import {
  * Custom tools (origin = "custom"). These are our own tools layered on top of
  * Shopify's MCP tools. Each belongs to a layer (see ../layers/toolLayers.js).
  */
+
+/**
+ * Dispatch a custom tool call to its handler.
+ * @param {string} name
+ * @param {object} args
+ * @param {{conversationId?: string, shopDomain?: string, shopId?: string, mcpClient?: object}} [ctx]
+ */
+export async function handleCustomToolCall(name, args, ctx = {}) {
+  try {
+    switch (name) {
+      case "get_store_info":
+        return await getStoreInfo(args, ctx);
+      case "get_shipping_estimate":
+        return { ok: true, type: "info", message: "Shipping is calculated at checkout. Check the store's shipping policy for details." };
+      case "get_featured_or_new_products":
+        return { ok: true, type: "info", message: "Use search_catalog with a query like 'featured' or 'new arrivals' to browse products." };
+      case "get_product_availability":
+        return { ok: true, type: "info", message: "Availability is shown on each product card (In stock / Out of stock)." };
+      case "add_to_cart":
+        return await addToCart(args, ctx);
+      case "remove_from_cart":
+        return await removeFromCart(args, ctx);
+      case "get_cart_summary":
+        return await getCartSummary(ctx);
+      case "get_checkout_url":
+        return await getCheckoutUrl(ctx);
+
+      // Layer 3 — human CS / merchant-gated (only creates SupportTickets)
+      case "escalate_to_human":
+        return await escalateToHuman(args, ctx);
+      case "request_after_sale_assistance":
+        return await requestAfterSaleAssistance(args, ctx);
+      case "create_support_ticket":
+        return await createSupportTicketHandler(args, ctx);
+      case "schedule_callback":
+        return await scheduleCallback(args, ctx);
+      default:
+        return { ok: false, error: `Unknown custom tool: ${name}` };
+    }
+  } catch (err) {
+    console.error(`[CustomTool] ${name} failed:`, err);
+    return { ok: false, error: err.message };
+  }
+}
 
 export function getCustomOpenAiTools() {
   return [
@@ -106,81 +150,6 @@ export function getCustomOpenAiTools() {
         parameters: { type: "object", properties: {} },
       },
     },
-    {
-      type: "function",
-      function: {
-        name: "apply_discount_code",
-        description:
-          "Apply or remove a discount code on the cart. Customer authentication is required.",
-        parameters: {
-          type: "object",
-          properties: { code: { type: "string" } },
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_customer_profile",
-        description:
-          "Return the logged-in customer's name and email. Addresses are only fetched when the customer asks for shipping/tracking.",
-        parameters: {
-          type: "object",
-          properties: { include_addresses: { type: "boolean" } },
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_wishlist",
-        description: "Return the logged-in customer's wishlist.",
-        parameters: { type: "object", properties: {} },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "add_to_wishlist",
-        description: "Add a product to the logged-in customer's wishlist.",
-        parameters: {
-          type: "object",
-          properties: { product_id: { type: "string" }, product_title: { type: "string" } },
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_order_details",
-        description:
-          "Return details for a specific order (logged-in customer).",
-        parameters: {
-          type: "object",
-          properties: { order_id: { type: "string" } },
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_order_history",
-        description: "Return the logged-in customer's past orders.",
-        parameters: { type: "object", properties: {} },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "track_shipment",
-        description:
-          "Return shipping/fulfillment tracking status for an order (logged-in customer).",
-        parameters: {
-          type: "object",
-          properties: { order_id: { type: "string" } },
-        },
-      },
-    },
     // Layer 3 — human CS / merchant-gated (only creates SupportTickets)
     {
       type: "function",
@@ -259,58 +228,8 @@ export function getCustomOpenAiTools() {
  * Dispatch a custom tool call to its handler.
  * @param {string} name
  * @param {object} args
- * @param {{conversationId?: string}} [ctx]
+ * @param {{conversationId?: string, shopDomain?: string, shopId?: string, mcpClient?: object}} [ctx]
  */
-export async function handleCustomToolCall(name, args, ctx = {}) {
-  try {
-    switch (name) {
-      case "get_store_info":
-        return await getStoreInfo(args, ctx);
-      case "get_shipping_estimate":
-        return { ok: true, type: "info", message: "Shipping is calculated at checkout. Check the store's shipping policy for details." };
-      case "get_featured_or_new_products":
-        return { ok: true, type: "info", message: "Use search_catalog with a query like 'featured' or 'new arrivals' to browse products." };
-      case "get_product_availability":
-        return { ok: true, type: "info", message: "Availability is shown on each product card (In stock / Out of stock)." };
-      case "add_to_cart":
-        return await addToCart(args, ctx);
-      case "remove_from_cart":
-        return await removeFromCart(args, ctx);
-      case "get_cart_summary":
-        return await getCartSummary(ctx);
-      case "get_checkout_url":
-        return await getCheckoutUrl(ctx);
-      case "apply_discount_code":
-        return await applyDiscountCode(args, ctx);
-      case "get_customer_profile":
-        return { ok: true, type: "info", message: "Customer profile requires login. (API integration pending.)" };
-      case "get_wishlist":
-        return { ok: true, type: "info", message: "Wishlist requires login. (API integration pending.)" };
-      case "add_to_wishlist":
-        return { ok: true, type: "info", message: "Wishlist requires login. (API integration pending.)" };
-      case "get_order_details":
-        return { ok: true, type: "info", message: "Order details require login. (API integration pending.)" };
-      case "get_order_history":
-        return { ok: true, type: "info", message: "Order history requires login. (API integration pending.)" };
-      case "track_shipment":
-        return { ok: true, type: "info", message: "Shipment tracking requires login. (API integration pending.)" };
-      case "escalate_to_human":
-        return await escalateToHuman(args, ctx);
-      case "request_after_sale_assistance":
-        return await requestAfterSaleAssistance(args, ctx);
-      case "create_support_ticket":
-        return await createSupportTicketHandler(args, ctx);
-      case "schedule_callback":
-        return await scheduleCallback(args, ctx);
-      default:
-        return { ok: false, error: `Unknown custom tool: ${name}` };
-    }
-  } catch (err) {
-    console.error(`[CustomTool] ${name} failed:`, err);
-    return { ok: false, error: err.message };
-  }
-}
-
 export function isCustomTool(name) {
   const schemas = getCustomOpenAiTools();
   return schemas.some((t) => t.function.name === name);

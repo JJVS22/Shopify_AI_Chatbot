@@ -3,7 +3,7 @@
  * Handles chat interactions with DeepSeek API and MCP tools
  */
 import MCPClient from "../mcp-client";
-import { saveMessage, getConversationHistory, storeCustomerAccountUrls, getCustomerAccountUrls as getCustomerAccountUrlsFromDb } from "../db.server";
+import { saveMessage, getConversationHistory } from "../db.server";
 import AppConfig from "../services/config.server";
 import { createSseStream } from "../services/streaming.server";
 import { createToolService } from "../services/tool.server";
@@ -72,6 +72,12 @@ async function handleChatRequest(request) {
     const conversationId = body.conversation_id || Date.now().toString();
     const promptType = body.prompt_type || AppConfig.api.defaultPromptType;
 
+    // A customer-uploaded photo (sent with the message) is persisted so the
+    // LLM can use it as the person_image_url for 2D try-on.
+    if (body.image_url) {
+      await saveMessage(conversationId, "user_image", String(body.image_url));
+    }
+
     const responseStream = createSseStream(async (stream) => {
       await handleChatSession({
         request,
@@ -111,14 +117,11 @@ async function handleChatSession({
 
   const shopId = request.headers.get("X-Shopify-Shop-Id");
   const shopDomain = request.headers.get("Origin");
-  const customerUrls = await getCustomerAccountUrls(shopDomain, conversationId);
-  const mcpApiUrl = customerUrls?.mcpApiUrl;
 
   const mcpClient = new MCPClient(
     shopDomain,
     conversationId,
     shopId,
-    mcpApiUrl,
   );
 
   try {
@@ -126,7 +129,6 @@ async function handleChatSession({
 
     try {
       await mcpClient.connectToStorefrontServer();
-      await mcpClient.connectToCustomerServer();
       console.log(`[MCP] Connected with ${mcpClient.tools.length} total tools`);
       if (mcpClient.tools.length > 0) {
         console.log(`[MCP] Tool names:`, mcpClient.tools.map(t => t.name).join(', '));
@@ -289,7 +291,13 @@ async function handleChatSession({
           });
 
           const shopDomain = request.headers.get("Origin") || null;
-          const toolResult = await handleCustomToolCall(toolName, toolArgs, { conversationId, shopDomain });
+          const shopId = request.headers.get("X-Shopify-Shop-Id") || null;
+          const toolResult = await handleCustomToolCall(toolName, toolArgs, {
+            conversationId,
+            shopDomain,
+            shopId,
+            mcpClient,
+          });
 
           await toolService.addToolResultToHistory(
             conversationHistory,
@@ -483,6 +491,13 @@ function buildConversationHistory(dbMessages) {
       } catch {
         history.push({ role: 'assistant', content: msg.content });
       }
+    } else if (msg.role === 'user_image') {
+      history.push({
+        role: 'user',
+        content:
+          `[The customer uploaded a photo of themselves (available at ${msg.content}). ` +
+          `Use this as person_image_url when calling tryon_2d.]`,
+      });
     } else if (msg.role === 'tool') {
       try {
         const parsed = JSON.parse(msg.content);
@@ -498,44 +513,6 @@ function buildConversationHistory(dbMessages) {
   }
 
   return history;
-}
-
-/**
- * Resolve the customer account MCP/OpenID endpoints for a shop (cached in DB),
- * using Shopify's well-known discovery URLs.
- */
-async function getCustomerAccountUrls(shopDomain, conversationId) {
-  try {
-    const existingUrls = await getCustomerAccountUrlsFromDb(conversationId);
-    if (existingUrls) return existingUrls;
-
-    const { hostname } = new URL(shopDomain);
-
-    const urls = await Promise.all([
-      fetch(`https://${hostname}/.well-known/customer-account-api`).then(res => res.json()),
-      fetch(`https://${hostname}/.well-known/openid-configuration`).then(res => res.json()),
-    ]).then(async ([mcpResponse, openidResponse]) => {
-      const response = {
-        mcpApiUrl: mcpResponse.mcp_api,
-        authorizationUrl: openidResponse.authorization_endpoint,
-        tokenUrl: openidResponse.token_endpoint,
-      };
-
-      await storeCustomerAccountUrls({
-        conversationId,
-        mcpApiUrl: mcpResponse.mcp_api,
-        authorizationUrl: openidResponse.authorization_endpoint,
-        tokenUrl: openidResponse.token_endpoint,
-      });
-
-      return response;
-    });
-
-    return urls;
-  } catch (error) {
-    console.error("Error getting customer MCP API URL:", error);
-    return null;
-  }
 }
 
 /**

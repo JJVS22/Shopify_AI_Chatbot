@@ -15,10 +15,24 @@ export async function generateAuthUrl(conversationId, shopId) {
   const scope = "customer-account-mcp-api:full";
   const responseType = "code";
 
-  // Use the actual app URL for redirect
-  const redirectUri = process.env.REDIRECT_URL;
+  // Use the actual app URL for redirect. Prefer REDIRECT_URL (the full
+  // callback URI), otherwise derive it from APP_URL so the login link works
+  // in production without requiring a separate REDIRECT_URL value.
+  const appUrl = (process.env.APP_URL || process.env.SHOPIFY_APP_URL || "").replace(/\/+$/, "");
+  const redirectUri = process.env.REDIRECT_URL || (appUrl ? `${appUrl}/auth/callback` : "");
 
-  // Include the conversation ID and shop ID in the state parameter for tracking
+  if (!clientId) {
+    throw new Error("SHOPIFY_API_KEY is not set. Add it to your environment (see .env.example).");
+  }
+  if (!redirectUri) {
+    throw new Error(
+      "No callback URL configured. Set REDIRECT_URL or APP_URL in your environment (see .env.example)."
+    );
+  }
+
+  // Include the conversation ID and shop ID in the state parameter for tracking.
+  // The shop ID is appended LAST so the callback can split on the final '-' and
+  // keep any dashes that may appear inside the conversation ID.
   const state = `${conversationId}-${shopId}`;
 
   // Generate code verifier and challenge
@@ -37,15 +51,15 @@ export async function generateAuthUrl(conversationId, shopId) {
   const baseAuthUrl = await getBaseAuthUrl(conversationId);
 
   if (!baseAuthUrl) {
-    throw new Error('Base auth URL not found');
+    throw new Error('Base auth URL not found. Customer accounts may not be enabled on this store, or the .well-known discovery endpoint is unreachable.');
   }
 
-
-  // Construct the authorization URL with hardcoded shop ID
-  const authUrl = `${baseAuthUrl}?client_id=${clientId}&scope=${encodeURIComponent(scope)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=${responseType}&state=${state}&code_challenge=${challenge}&code_challenge_method=${codeChallengeMethod}`;
+  // Construct the authorization URL
+  const authUrl = `${baseAuthUrl}?client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scope)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=${responseType}&state=${encodeURIComponent(state)}&code_challenge=${challenge}&code_challenge_method=${codeChallengeMethod}`;
 
   return {
     url: authUrl,
+    redirect_uri: redirectUri,
     conversation_id: conversationId
   };
 }

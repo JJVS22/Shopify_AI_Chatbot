@@ -6,7 +6,12 @@ import AppConfig from "./config.server";
 import {
   saveTryonResultRecord,
   getTryOnResultByPublicUrl,
+  getLatestUploadedImage,
 } from "../db.server";
+import {
+  resolveTryonResultFile,
+  contentTypeForFilename,
+} from "./providers/storage.server";
 
 /**
  * High-level try-on orchestration used by HTTP routes and LLM tool handlers.
@@ -149,8 +154,19 @@ export async function run3dTryon({ image, conversationId }) {
  */
 export async function handleTryonToolCall(toolName, toolArgs, conversationId) {
   if (toolName === "tryon_2d") {
+    // If the LLM didn't pass a person photo, fall back to the photo the customer
+    // uploaded with their message (sent via the upload icon in the chat).
+    let personImage = toolArgs.person_image_url;
+    if (!personImage && conversationId) {
+      const uploaded = await getLatestUploadedImage(conversationId);
+      if (uploaded) {
+        personImage = await uploadedImageToDataUrl(uploaded) || uploaded;
+        console.log("[Tryon] Using customer-uploaded photo for 2D try-on");
+      }
+    }
+
     const result = await run2dTryon({
-      personImage: toolArgs.person_image_url,
+      personImage,
       productImage: toolArgs.product_image_url,
       prompt: toolArgs.prompt,
       productTitle: toolArgs.product_title,
@@ -273,6 +289,29 @@ function buildPairingPrompt(originalTitle, addedTitle) {
     ` Add the ${addedTitle} on a different part of the body from the ${originalTitle} (they do not overlap), ` +
     `so both items are clearly visible together.`
   );
+}
+
+/**
+ * Convert one of our stored uploaded images (public URL) into a base64 data URL
+ * by reading the file from disk. This lets Replicate receive the image as an
+ * upload instead of trying to fetch our (possibly localhost) URL.
+ */
+async function uploadedImageToDataUrl(publicUrl) {
+  try {
+    const pathname = new URL(publicUrl).pathname; // /api/tryon/results/2d/<file>
+    const parts = pathname.split("/").filter(Boolean); // [api, tryon, results, 2d, file]
+    const kind = parts[parts.length - 2];
+    const filename = parts[parts.length - 1];
+    const absolutePath = resolveTryonResultFile(kind, filename);
+    if (!absolutePath) return null;
+    const { readFile } = await import("node:fs/promises");
+    const buffer = await readFile(absolutePath);
+    const mime = contentTypeForFilename(filename);
+    return `data:${mime};base64,${buffer.toString("base64")}`;
+  } catch (err) {
+    console.warn("[Tryon] Could not convert uploaded image to data URL:", err.message);
+    return null;
+  }
 }
 
 export default {

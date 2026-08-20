@@ -29,6 +29,14 @@
     transition: none;
   }
 
+  /* Hide the chat window while the bubble is being dragged, so it doesn't
+     get stuck on the wrong side of the bubble mid-drag. It reappears on the
+     correct side once the bubble is snapped to an edge. */
+  .shop-ai-bubble-dragging .shop-ai-chat-window {
+    opacity: 0;
+    pointer-events: none;
+  }
+
   .shop-ai-chat-bubble:hover {
     transform: scale(1.05);
   }
@@ -127,6 +135,11 @@
     .shop-ai-chat-header {
       padding: 12px 16px;
       border-radius: 0;
+    }
+
+    /* Resize grips are useless on the fullscreen mobile window */
+    .shop-ai-chat-resize-grip {
+      display: none;
     }
   }
 
@@ -398,6 +411,157 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
+  }
+
+  .shop-ai-chat-attach {
+    background: none;
+    border: none;
+    color: #606060;
+    cursor: pointer;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    padding: 0;
+  }
+
+  .shop-ai-chat-attach:hover {
+    background: #f1f1f1;
+    color: #5046e4;
+  }
+
+  /* Drag-to-resize grips at the four corners of the chat window */
+  .shop-ai-chat-resize-grip {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    z-index: 6;
+    opacity: 0.55;
+  }
+
+  .shop-ai-chat-resize-grip.grip-tr {
+    top: 0;
+    right: 0;
+    cursor: nesw-resize;
+  }
+
+  .shop-ai-chat-resize-grip.grip-tl {
+    top: 0;
+    left: 0;
+    cursor: nwse-resize;
+  }
+
+  .shop-ai-chat-resize-grip.grip-br {
+    bottom: 0;
+    right: 0;
+    cursor: nwse-resize;
+  }
+
+  .shop-ai-chat-resize-grip.grip-bl {
+    bottom: 0;
+    left: 0;
+    cursor: nesw-resize;
+  }
+
+  .shop-ai-chat-resize-grip::after {
+    content: '';
+    position: absolute;
+    width: 9px;
+    height: 9px;
+  }
+
+  .shop-ai-chat-resize-grip.grip-tr::after {
+    top: 3px;
+    right: 3px;
+    border-top: 2px solid #b9b9b9;
+    border-right: 2px solid #b9b9b9;
+    border-top-right-radius: 2px;
+  }
+
+  .shop-ai-chat-resize-grip.grip-tl::after {
+    top: 3px;
+    left: 3px;
+    border-top: 2px solid #b9b9b9;
+    border-left: 2px solid #b9b9b9;
+    border-top-left-radius: 2px;
+  }
+
+  .shop-ai-chat-resize-grip.grip-br::after {
+    bottom: 3px;
+    right: 3px;
+    border-bottom: 2px solid #b9b9b9;
+    border-right: 2px solid #b9b9b9;
+    border-bottom-right-radius: 2px;
+  }
+
+  .shop-ai-chat-resize-grip.grip-bl::after {
+    bottom: 3px;
+    left: 3px;
+    border-bottom: 2px solid #b9b9b9;
+    border-left: 2px solid #b9b9b9;
+    border-bottom-left-radius: 2px;
+  }
+
+  .shop-ai-chat-resize-grip:hover {
+    opacity: 1;
+  }
+
+  .shop-ai-user-image {
+    max-width: 220px;
+    max-height: 220px;
+    border-radius: 12px;
+    display: block;
+    margin-top: 4px;
+  }
+
+  .shop-ai-message.user .shop-ai-user-image {
+    border: 1px solid #e9e9e9;
+  }
+
+  .shop-ai-user-with-image p {
+    margin: 6px 0 0;
+  }
+
+  /* Pending upload chip shown next to the chat input until the message is sent */
+  .shop-ai-staged-image {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    margin: 0 6px 6px;
+    border: 1px solid #e9e9e9;
+    border-radius: 10px;
+    background: #fafafa;
+    max-width: 180px;
+  }
+
+  .shop-ai-staged-image img {
+    width: 44px;
+    height: 44px;
+    object-fit: cover;
+    border-radius: 6px;
+    display: block;
+  }
+
+  .shop-ai-staged-remove {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px;
+  }
+
+  .shop-ai-staged-remove:hover {
+    color: #b3231e;
+  }
+
+  .shop-ai-chat-window.resizing {
+    user-select: none;
   }
 
   .shop-ai-typing-indicator {

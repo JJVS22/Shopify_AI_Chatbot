@@ -1,4 +1,5 @@
 import { getCodeVerifier, storeCustomerToken, getCustomerAccountUrls } from "../db.server";
+import process from "node:process";
 
 /**
  * Handle OAuth callback from Shopify Customer API
@@ -7,7 +8,7 @@ export async function loader({ request }) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  const [conversationId, shopId] = state.split("-");
+  const { conversationId, shopId } = parseState(state);
 
   if (!code) {
     return new Response(JSON.stringify({ error: "Authorization code is missing" }), { status: 400 });
@@ -85,18 +86,37 @@ export async function loader({ request }) {
 }
 
 /**
+ * Parse the OAuth `state` param back into conversationId + shopId.
+ * The state is built as "<conversationId>-<shopId>", so we split on the LAST
+ * dash — shopId is numeric and never contains a dash, but the conversation ID
+ * might.
+ */
+function parseState(state) {
+  if (!state || typeof state !== "string") {
+    return { conversationId: "", shopId: "" };
+  }
+  const sep = state.lastIndexOf("-");
+  if (sep <= 0) return { conversationId: state, shopId: "" };
+  return {
+    conversationId: state.slice(0, sep),
+    shopId: state.slice(sep + 1),
+  };
+}
+
+/**
  * Exchange authorization code for access token
  * @param {string} code - The authorization code
  * @returns {Promise<Object>} - The token response
  */
 async function exchangeCodeForToken(code, state) {
   const clientId = process.env.SHOPIFY_API_KEY;
-  const [conversationId, shopId] = state.split("-");
+  const { conversationId, shopId } = parseState(state);
   if (!clientId || !shopId) {
     throw new Error("SHOPIFY_CLIENT_ID and SHOPIFY_SHOP_ID environment variables are required");
   }
 
-  const redirectUri = process.env.REDIRECT_URL;
+  const appUrl = (process.env.APP_URL || process.env.SHOPIFY_APP_URL || "").replace(/\/+$/, "");
+  const redirectUri = process.env.REDIRECT_URL || (appUrl ? `${appUrl}/auth/callback` : "");
 
   // Correct token URL format
   const tokenUrl = await getTokenUrl(conversationId);

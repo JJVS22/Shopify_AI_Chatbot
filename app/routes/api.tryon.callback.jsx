@@ -47,7 +47,7 @@ export async function action({ request }) {
         ticket_id: ticket.id,
         message:
           "Callback scheduled for " +
-          new Date(callTime).toLocaleString() +
+          formatDateTimeDDMMYYYY(callTime) +
           ". A support agent will contact you then.",
       },
       200,
@@ -67,6 +67,21 @@ function corsHeaders(request) {
     "Access-Control-Allow-Headers": "Content-Type, Accept, X-Shopify-Shop-Id",
     "Access-Control-Allow-Credentials": "true",
   };
+}
+
+/**
+ * Format a date value as DD/MM/YYYY HH:MM.
+ * @param {string|Date} value
+ * @returns {string}
+ */
+function formatDateTimeDDMMYYYY(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const pad = (n) => (n < 10 ? "0" : "") + n;
+  return (
+    `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
 }
 
 function json(data, status, request) {

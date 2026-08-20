@@ -67,7 +67,15 @@ export function createToolService() {
       }
     }
 
-    await addToolResultToHistory(conversationHistory, toolUseId, resultText, conversationId);
+    // Keep the tool result the LLM sees consistent with the cards that are
+    // actually shown (max maxProductsToDisplay), so the text answer never
+    // lists more products than the cards.
+    let historyText = resultText;
+    if (toolName === AppConfig.tools.productSearchName) {
+      historyText = trimProductResultText(resultText, AppConfig.tools.maxProductsToDisplay);
+    }
+
+    await addToolResultToHistory(conversationHistory, toolUseId, historyText, conversationId);
   };
 
   /**
@@ -79,6 +87,27 @@ export function createToolService() {
       return toolUseResponse.content[0].text || JSON.stringify(toolUseResponse.content[0]);
     }
     return typeof toolUseResponse === "string" ? toolUseResponse : JSON.stringify(toolUseResponse);
+  };
+
+  /**
+   * Cap the number of products inside a search_catalog tool result so the LLM
+   * only ever sees as many products as will be shown as cards.
+   * @param {string} resultText
+   * @param {number} max
+   * @returns {string}
+   */
+  const trimProductResultText = (resultText, max) => {
+    if (!resultText || typeof resultText !== "string") return resultText;
+    try {
+      const data = JSON.parse(resultText);
+      if (data && Array.isArray(data.products) && data.products.length > max) {
+        data.products = data.products.slice(0, max);
+        return JSON.stringify(data);
+      }
+    } catch (err) {
+      // Not JSON — leave as-is.
+    }
+    return resultText;
   };
 
   /**
@@ -239,27 +268,60 @@ export function createToolService() {
   };
 
   /**
-   * Extract the display price from a product, converting minor units (cents)
-   * to a formatted currency string.
+   * Extract the display price from a product.
+   *
+   * The Shopify storefront MCP has returned two different shapes over time:
+   *  - newer /api/ucp/mcp (UCP catalog spec): `price_range: { min: { amount: 1899, currency: "USD" } }`
+   *    and `variants[].price: { amount: 1899, currency }` — amounts in MINOR units (cents).
+   *  - older /api/mcp: `price_range: { min: "28.0", currency: "CAD" }` and
+   *    `variants[].price: "28.0"` — amounts in MAJOR units (plain strings/numbers).
+   *
+   * This handles both: object amounts are treated as cents (÷100), scalar
+   * amounts are treated as major units directly.
    */
   const extractProductPrice = (product) => {
+    const formatPrice = (majorAmount, currency) => {
+      if (currency) {
+        try {
+          return new Intl.NumberFormat("en", {
+            style: "currency",
+            currency,
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          }).format(majorAmount);
+        } catch (err) {
+          // fall through to the "$" fallback
+        }
+      }
+      return `$${Number(majorAmount).toFixed(2)}`;
+    };
+
+    const moneyValue = (value, fallbackCurrency) => {
+      if (value == null) return null;
+      // Object shape → amount in minor units (cents); scalar → major units.
+      if (typeof value === 'object') {
+        const amount = value.amount ?? value.value;
+        if (amount == null) return null;
+        return {
+          major: Number(amount) / 100,
+          currency: value.currency || fallbackCurrency || '',
+        };
+      }
+      return {
+        major: Number(value),
+        currency: fallbackCurrency || '',
+      };
+    };
+
     if (product.price_range) {
       const pr = product.price_range;
-      const minAmount = pr.min?.amount ?? pr.amount;
-      const currency = pr.min?.currency ?? pr.currency ?? '';
-      if (minAmount != null) {
-        const price = (Number(minAmount) / 100).toFixed(2);
-        return currency ? `${currency} $${price}` : `$${price}`;
-      }
+      const parsed = moneyValue(pr.min ?? pr, pr.currency);
+      if (parsed) return formatPrice(parsed.major, parsed.currency);
     }
     if (product.variants && product.variants.length > 0) {
       const v = product.variants[0];
-      const amount = v.price?.amount ?? v.price;
-      const currency = v.price?.currency ?? v.currency ?? '';
-      if (amount != null) {
-        const price = (Number(amount) / 100).toFixed(2);
-        return currency ? `${currency} $${price}` : `$${price}`;
-      }
+      const parsed = moneyValue(v.price, v.currency);
+      if (parsed) return formatPrice(parsed.major, parsed.currency);
     }
     return 'Price not available';
   };

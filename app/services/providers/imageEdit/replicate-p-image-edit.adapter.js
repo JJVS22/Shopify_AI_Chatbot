@@ -13,17 +13,17 @@ import { saveTryonResult } from "../storage.server";
  */
 const PLACEMENT_PROMPTS = {
   holding:
-    "Show the person holding the product from the second image naturally in their hands, as if they are holding it. Keep the person's identity, face, pose, and background unchanged. Realistic lighting and shadows.",
+    "Extract ONLY the single product from the second image, ignoring the background, any model, mannequin, or other objects in that image. Show the person in the first image holding that product naturally in their hands, as if they are holding it. Keep the person's identity, face, pose, and background unchanged. Realistic lighting and shadows.",
   wearing:
-    "Dress the person in the first image with ONLY the single product shown in the second image. Do NOT add any extra clothing, accessories, or other items that are not present in the second image. Keep the person's face, body pose, and background unchanged. Fit the product to the person naturally and realistically; do not alter the product itself. Realistic fabric fit and lighting.",
+    "Extract ONLY the garment/clothing shown in the second image — ignore and remove the background, any model/mannequin wearing it, and any other objects in that image. Dress the person in the first image with that single garment, placing it on the matching body part of the person (e.g. a top/torso on the upper body, pants on the legs, shoes on the feet) and following the person's natural pose. Do NOT add any extra clothing, accessories, or items that are not in the second image. Keep the person's face, body shape, pose, and background unchanged. Fit the garment to the person naturally and realistically; do not alter the garment itself. Realistic fabric fit, draping, and lighting.",
   pairing:
-    "Complete the outfit in the first image by ADDING the product from the second image. The first image is an edited photo of a person who is already wearing another item — KEEP every existing clothing, accessory, and item already present in the first image exactly as it is. Do NOT remove, replace, cover, or alter anything already worn. Add the new product from the second image naturally alongside the existing items (e.g. add a top to existing pants, layer a jacket over an existing outfit, or add a bag/shoes to an existing look). Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.",
+    "Complete the outfit in the first image by ADDING the product from the second image. The first image is an edited photo of a person who is already wearing another item — KEEP every existing clothing, accessory, and item already present in the first image exactly as it is. Do NOT remove, replace, cover, or alter anything already worn. Extract ONLY the product from the second image (ignore its background, model, or mannequin) and add it naturally alongside the existing items (e.g. add a top to existing pants, layer a jacket over an existing outfit, or add a bag/shoes to an existing look). Place it on the appropriate body part of the person. Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.",
   next_to:
-    "Place the product from the second image next to the person in the first image, standing beside them. Keep the person's identity, pose, and background unchanged. Realistic lighting and shadows.",
+    "Extract ONLY the product from the second image (ignore its background, model, or mannequin) and place it next to the person in the first image, standing beside them. Keep the person's identity, pose, and background unchanged. Realistic lighting and shadows.",
 };
 
 const FALLBACK_PROMPT =
-  "Combine the product from the second image with the person from the first image in a natural, realistic way. Keep the person's identity, face, pose, and background unchanged. Realistic lighting, shadows, and scale.";
+  "Extract ONLY the garment or product from the second image — ignore and remove the background, any model/mannequin, and any other objects in that image. Combine it with the person from the first image in a natural, realistic way, placing the garment on the matching body part of the person. Keep the person's identity, face, pose, and background unchanged. Realistic lighting, shadows, and scale.";
 
 /**
  * 2D virtual try-on via Replicate prunaai/p-image-edit (swappable).

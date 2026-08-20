@@ -8,6 +8,64 @@
   'use strict';
 
   /**
+   * Resolve the app backend base URL.
+   * Priority: theme-editor block setting (`api_base_url`) → APP_URL from the
+   * server-rendered page → the local `shopify app dev` proxy (localhost:3458).
+   * In production the merchant MUST set the "App API Base URL" block setting;
+   * the localhost fallback exists so the chat works out of the box in dev.
+   */
+  function getApiBaseUrl() {
+    var configured = window.shopChatConfig && window.shopChatConfig.apiBaseUrl;
+    var fallback = window.shopChatConfig && window.shopChatConfig.appUrl;
+    var base = configured || fallback || 'https://localhost:3458';
+    return String(base || '').replace(/\/+$/, '');
+  }
+
+  /**
+   * Build an absolute URL for a backend API path (e.g. '/chat', '/auth/token-status').
+   * Throws a clear error when the app API base URL is not configured.
+   * @param {string} path - Path starting with '/'
+   * @returns {string}
+   */
+  function apiUrl(path) {
+    var base = getApiBaseUrl();
+    if (!base) {
+      throw new Error('App API base URL is not configured. Set the "App API Base URL" setting in the theme editor (AI Chat Assistant block).');
+    }
+    return base + (path.charAt(0) === '/' ? path : '/' + path);
+  }
+
+  var DEFAULT_WELCOME_MESSAGE =
+    "Hello there! 👋 Great to see you!\n" +
+    "\n" +
+    "I'd love to help you out today. Just to remind you what I can do:\n" +
+    "\n" +
+    "- 🛍️ **Browse products & add to cart** – no login needed, just checkout at the end\n" +
+    "- ✨ **Virtual try-on** – upload a photo (use the 📷 icon) and see how any product looks on you in 2D or 3D\n" +
+    "- 📞 **Schedule a callback** – if you'd like to speak with a human support agent\n" +
+    "\n" +
+    "I've put our **newest products** above — is there anything that caught your eye? Or would you like to search for something specific — maybe a gift, a color, or a style? Just let me know and I'll point you in the right direction! 😊";
+
+  /**
+   * Welcome message shown when a new conversation starts.
+   * Respects a merchant's customized block setting, but ignores older default
+   * values that may still be saved in a theme that configured the block before
+   * the message was updated.
+   */
+  function getWelcomeMessage() {
+    var configured = window.shopChatConfig && window.shopChatConfig.welcomeMessage;
+    var trimmed = String(configured || '').trim();
+    var OLD_DEFAULTS = [
+      '👋 Hi there! How can I help you today?',
+      "👋 Hi! I'm your AI store assistant.",
+    ];
+    if (trimmed && OLD_DEFAULTS.indexOf(trimmed) === -1) {
+      return trimmed;
+    }
+    return DEFAULT_WELCOME_MESSAGE;
+  }
+
+  /**
    * Application namespace to prevent global scope pollution
    */
   const ShopAIChat = {
@@ -32,7 +90,10 @@
           chatWindow: container.querySelector('.shop-ai-chat-window'),
           closeButton: container.querySelector('.shop-ai-chat-close'),
           resizeButton: container.querySelector('.shop-ai-chat-resize'),
-          chatInput: container.querySelector('.shop-ai-chat-input input'),
+          resizeGrip: container.querySelector('.shop-ai-chat-resize-grip'),
+          attachButton: container.querySelector('.shop-ai-chat-attach'),
+          chatFile: container.querySelector('.shop-ai-chat-file'),
+          chatInput: container.querySelector('.shop-ai-chat-input input[type="text"]'),
           sendButton: container.querySelector('.shop-ai-chat-send'),
           messagesContainer: container.querySelector('.shop-ai-chat-messages')
         };
@@ -56,10 +117,13 @@
        * Set up all event listeners for UI interactions
        */
       setupEventListeners: function() {
-        const { closeButton, chatInput, sendButton, messagesContainer, resizeButton } = this.elements;
+        const { closeButton, chatInput, sendButton, messagesContainer, resizeButton, attachButton, chatFile } = this.elements;
 
         // Bubble: drag to move (snaps left/right) OR click to toggle window
         this.enableBubbleDrag();
+
+        // Drag-to-resize the chat window from the bottom-right grip
+        this.enableResizeDrag();
 
         // Close chat window
         closeButton.addEventListener('click', () => this.closeChatWindow());
@@ -67,6 +131,17 @@
         // Toggle chat window size (enlarge / shrink)
         if (resizeButton) {
           resizeButton.addEventListener('click', () => this.toggleResize());
+        }
+
+        // Upload an image for try-on (works even without a product selected)
+        if (attachButton && chatFile) {
+          attachButton.addEventListener('click', () => chatFile.click());
+          chatFile.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+              this.handleAttachUpload(e.target.files[0]);
+            }
+            chatFile.value = '';
+          });
         }
 
         // Send message when pressing Enter in input
@@ -195,6 +270,222 @@
       },
 
       /**
+       * Drag any of the four corner grips to resize the chat window. The corner
+       * under the grip follows the mouse; the opposite corner stays anchored.
+       * The size is persisted in sessionStorage and clamped to bounds.
+       */
+      enableResizeDrag: function() {
+        const chatWindow = this.elements.chatWindow;
+        const container = this.elements.container;
+        if (!chatWindow || !container) return;
+
+        // On small screens the window is fullscreen (position: fixed), so
+        // corner-grip resizing doesn't apply — skip attaching the handlers.
+        if (this.isMobile || window.innerWidth <= 480) return;
+
+        const grips = chatWindow.querySelectorAll('.shop-ai-chat-resize-grip');
+        if (grips.length === 0) return;
+
+        const MIN_W = 300;
+        const MIN_H = 300;
+        const MAX_W = Math.max(320, window.innerWidth - 40);
+        const MAX_H = Math.max(360, window.innerHeight - 80);
+
+        // Restore persisted size.
+        try {
+          const saved = JSON.parse(sessionStorage.getItem('shopAiWindowSize') || 'null');
+          if (saved && saved.width && saved.height) {
+            chatWindow.style.width = Math.min(Math.max(saved.width, MIN_W), MAX_W) + 'px';
+            chatWindow.style.height = Math.min(Math.max(saved.height, MIN_H), MAX_H) + 'px';
+            chatWindow.style.maxWidth = 'none';
+            chatWindow.style.maxHeight = 'none';
+          }
+        } catch (err) { /* ignore malformed stored size */ }
+
+        const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+        const self = this;
+
+        // Opposite corner names for the anchor.
+        const ANCHOR = { tl: 'br', tr: 'bl', bl: 'tr', br: 'tl' };
+
+        function attachGrip(grip, corner) {
+          let startX = null;
+          let anchor = null; // opposite (fixed) corner in container coordinates
+
+          grip.addEventListener('pointerdown', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const crect = container.getBoundingClientRect();
+            const wrect = chatWindow.getBoundingClientRect();
+            const a = ANCHOR[corner];
+            if (a === 'br') anchor = { x: wrect.right - crect.left, y: wrect.bottom - crect.top };
+            else if (a === 'bl') anchor = { x: wrect.left - crect.left, y: wrect.bottom - crect.top };
+            else if (a === 'tr') anchor = { x: wrect.right - crect.left, y: wrect.top - crect.top };
+            else anchor = { x: wrect.left - crect.left, y: wrect.top - crect.top };
+            startX = e.clientX;
+            chatWindow.classList.add('resizing');
+            try { grip.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+          });
+
+          grip.addEventListener('pointermove', function(e) {
+            if (startX === null) return;
+            const crect = container.getBoundingClientRect();
+            const mouseX = e.clientX - crect.left;
+            const mouseY = e.clientY - crect.top;
+
+            let width, left;
+            if (corner === 'tr' || corner === 'br') {
+              width = clamp(mouseX - anchor.x, MIN_W, MAX_W);
+              left = anchor.x;
+            } else {
+              width = clamp(anchor.x - mouseX, MIN_W, MAX_W);
+              left = anchor.x - width;
+            }
+
+            let height, top;
+            if (corner === 'tl' || corner === 'tr') {
+              height = clamp(anchor.y - mouseY, MIN_H, MAX_H);
+              top = anchor.y - height;
+            } else {
+              height = clamp(mouseY - anchor.y, MIN_H, MAX_H);
+              top = anchor.y;
+            }
+
+            // Keep the window on-screen: the dragged top/left edge can never go
+            // past the viewport. The window coordinates here are relative to
+            // the container (which floats above/left of the bubble), so the
+            // viewport thresholds must be converted into container space.
+            const minLeft = 10 - crect.left;
+            const minTop = 10 - crect.top;
+            if ((corner === 'tl' || corner === 'tr') && top < minTop) {
+              top = minTop;
+              height = Math.max(MIN_H, anchor.y - top);
+            }
+            if ((corner === 'tl' || corner === 'bl') && left < minLeft) {
+              left = minLeft;
+              width = Math.max(MIN_W, anchor.x - left);
+            }
+
+            chatWindow.style.left = left + 'px';
+            chatWindow.style.top = top + 'px';
+            chatWindow.style.width = width + 'px';
+            chatWindow.style.height = height + 'px';
+            chatWindow.style.right = 'auto';
+            chatWindow.style.bottom = 'auto';
+            chatWindow.style.maxWidth = 'none';
+            chatWindow.style.maxHeight = 'none';
+            self.scrollToBottom();
+          });
+
+          const endResize = function() {
+            if (startX === null) return;
+            try { grip.releasePointerCapture(); } catch (err) { /* ignore */ }
+            chatWindow.classList.remove('resizing');
+            try {
+              sessionStorage.setItem('shopAiWindowSize', JSON.stringify({
+                width: chatWindow.offsetWidth,
+                height: chatWindow.offsetHeight,
+              }));
+            } catch (err) { /* ignore */ }
+            // Keep the window where the user dragged it (don't reset position).
+            startX = null;
+            anchor = null;
+          };
+
+          grip.addEventListener('pointerup', endResize);
+          grip.addEventListener('pointercancel', endResize);
+        }
+
+        grips.forEach(function(g) {
+          const cls = ['grip-tl', 'grip-tr', 'grip-bl', 'grip-br'].find(function(c) { return g.classList.contains(c); });
+          // Normalize the grip's class ("grip-tl") to the short corner name
+          // ("tl") used by ANCHOR and the resize branches below.
+          const corner = cls ? cls.replace('grip-', '') : 'tr';
+          attachGrip(g, corner);
+        });
+      },
+
+      /**
+       * Handle an image chosen via the upload icon next to the send button.
+       * The image is STAGED (not sent to the chat yet) and shown as a small
+       * pending thumbnail near the input. It is uploaded and sent together with
+       * the message only when the customer presses the send button (or when they
+       * tap "Try On" on a product card).
+       * @param {File} file
+       */
+      handleAttachUpload: function(file) {
+        if (!file || !file.type.startsWith('image/')) {
+          alert('Please upload an image file.');
+          return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          alert('Photo is too large. Please use an image under 10MB.');
+          return;
+        }
+
+        const tryonState = ShopAIChat.TryOn.state;
+        tryonState.stagedFile = file;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          tryonState.stagedPreview = e.target.result;
+          ShopAIChat.UI.renderStagedImage();
+        };
+        reader.readAsDataURL(file);
+      },
+
+      /**
+       * Render (or update) the pending uploaded-image chip shown next to the
+       * chat input. The image stays here until the message is sent.
+       */
+      renderStagedImage: function() {
+        const { chatInput, chatWindow } = this.elements;
+        if (!chatInput) return;
+
+        let chip = chatWindow.querySelector('.shop-ai-staged-image');
+        const preview = ShopAIChat.TryOn.state.stagedPreview;
+
+        if (!preview) {
+          if (chip) chip.remove();
+          return;
+        }
+
+        if (!chip) {
+          chip = document.createElement('div');
+          chip.className = 'shop-ai-staged-image';
+          chatWindow.appendChild(chip);
+        }
+
+        chip.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = preview;
+        img.alt = 'Photo to send';
+        chip.appendChild(img);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'shop-ai-staged-remove';
+        remove.textContent = '✕';
+        remove.setAttribute('aria-label', 'Remove photo');
+        remove.addEventListener('click', function() {
+          ShopAIChat.TryOn.state.stagedFile = null;
+          ShopAIChat.TryOn.state.stagedPreview = null;
+          chip.remove();
+        });
+        chip.appendChild(remove);
+      },
+
+      /**
+       * Clear the staged image chip (called after the photo is sent).
+       */
+      clearStagedImage: function() {
+        const chip = this.elements.chatWindow && this.elements.chatWindow.querySelector('.shop-ai-staged-image');
+        if (chip) chip.remove();
+        ShopAIChat.TryOn.state.stagedFile = null;
+        ShopAIChat.TryOn.state.stagedPreview = null;
+      },
+
+      /**
        * Position the container so the bubble follows the pointer.
        */
       moveBubbleTo: function(clientX, clientY) {
@@ -233,6 +524,22 @@
         container.style.bottom = bottom + 'px';
         container.classList.remove('side-left', 'side-right');
         container.classList.add('side-' + side);
+
+        // Re-anchor the chat window to the correct side of the bubble (the CSS
+        // uses .side-left/.side-right). Clear any inline position left over from
+        // a previous resize, keeping the resized width/height.
+        const w = this.elements.chatWindow;
+        if (w) {
+          w.style.left = '';
+          w.style.top = '';
+          w.style.right = '';
+          w.style.bottom = '';
+          const wrect = w.getBoundingClientRect();
+          if (wrect.top < 10) {
+            w.style.height = Math.max(220, w.offsetHeight - (10 - wrect.top)) + 'px';
+            w.style.maxHeight = 'none';
+          }
+        }
 
         sessionStorage.setItem('shopAiBubblePos', JSON.stringify({ side, bottom }));
         this.updateWindowDirection();
@@ -507,7 +814,8 @@
         field('Full name', 'text', 'shop-cb-name', 'e.g. Jane Doe', true);
         field('Email', 'email', 'shop-cb-email', 'e.g. jane@example.com', false);
         field('Phone', 'tel', 'shop-cb-phone', 'e.g. +1 555 000 1234', true);
-        field('Preferred date & time', 'datetime-local', 'shop-cb-time', '', true);
+        field('Preferred date (DD/MM/YYYY)', 'text', 'shop-cb-date', 'e.g. 24/12/2026', true);
+        field('Preferred time', 'time', 'shop-cb-time', '', true);
         field('Reason (optional)', 'text', 'shop-cb-reason', 'e.g. Question about an order', false);
 
         var submit = document.createElement('button');
@@ -521,16 +829,64 @@
         status.style.display = 'none';
         card.appendChild(status);
 
+        /**
+         * Parse a DD/MM/YYYY string into { day, month, year } after validating
+         * that it is a real calendar date (rejects 31/02, 00/13, etc.).
+         * @param {string} value
+         * @returns {{day:number, month:number, year:number}|null}
+         */
+        function parseDDMMYYYY(value) {
+          var match = String(value || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (!match) return null;
+          var day = parseInt(match[1], 10);
+          var month = parseInt(match[2], 10);
+          var year = parseInt(match[3], 10);
+          if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+          var daysInMonth = new Date(year, month, 0).getDate();
+          if (day > daysInMonth) return null;
+          return { day: day, month: month, year: year };
+        }
+
+        function pad2(n) {
+          return (n < 10 ? '0' : '') + n;
+        }
+
         submit.addEventListener('click', function() {
           var name = document.getElementById('shop-cb-name').value.trim();
           var phone = document.getElementById('shop-cb-phone').value.trim();
-          var time = document.getElementById('shop-cb-time').value;
+          var dateValue = document.getElementById('shop-cb-date').value.trim();
+          var timeValue = document.getElementById('shop-cb-time').value.trim();
 
-          if (!name || !phone || !time) {
-            status.textContent = 'Please fill in your name, phone, and preferred date/time.';
+          if (!name || !phone) {
+            status.textContent = 'Please fill in your name and phone number.';
             status.style.display = 'block';
             return;
           }
+
+          var parsedDate = parseDDMMYYYY(dateValue);
+          if (!parsedDate) {
+            status.textContent = 'Please enter the date as DD/MM/YYYY (e.g. 24/12/2026).';
+            status.style.display = 'block';
+            return;
+          }
+
+          if (!timeValue) {
+            status.textContent = 'Please choose a preferred time.';
+            status.style.display = 'block';
+            return;
+          }
+
+          var timeParts = timeValue.split(':');
+          var hour = parseInt(timeParts[0], 10);
+          var minute = parseInt(timeParts[1], 10);
+          if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+            status.textContent = 'Please choose a valid time (HH:MM).';
+            status.style.display = 'block';
+            return;
+          }
+
+          var isoDateTime = parsedDate.year + '-' + pad2(parsedDate.month) + '-' + pad2(parsedDate.day) +
+            'T' + pad2(hour) + ':' + pad2(minute);
 
           submit.disabled = true;
           submit.textContent = 'Scheduling...';
@@ -539,13 +895,25 @@
             name: name,
             email: document.getElementById('shop-cb-email').value.trim(),
             phone: phone,
-            call_time: time,
+            call_time: isoDateTime,
             reason: document.getElementById('shop-cb-reason').value.trim()
           };
           var conversationId = sessionStorage.getItem('shopAiConversationId');
           if (conversationId) payload.conversation_id = conversationId;
 
-          fetch('https://localhost:3458/api/tryon/callback', {
+          var callbackUrl;
+          try {
+            callbackUrl = apiUrl('/api/tryon/callback');
+          } catch (err) {
+            console.error('Callback scheduling failed:', err);
+            submit.disabled = false;
+            submit.textContent = 'Request Callback';
+            status.textContent = 'The chat is not configured. Set the "App API Base URL" in the theme editor.';
+            status.style.display = 'block';
+            return;
+          }
+
+          fetch(callbackUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -587,8 +955,58 @@
         const userMessage = chatInput.value.trim();
         const conversationId = sessionStorage.getItem('shopAiConversationId');
 
-        // Add user message to chat
-        this.add(userMessage, 'user', messagesContainer);
+        const staged = ShopAIChat.TryOn.state.stagedFile;
+        const stagedPreview = ShopAIChat.TryOn.state.stagedPreview;
+
+        // Upload the staged image first so it can be attached to the message.
+        let imageUrl = null;
+        if (staged) {
+          try {
+            const formData = new FormData();
+            formData.append('image', staged);
+            if (conversationId) formData.append('conversation_id', conversationId);
+            const res = await fetch(apiUrl('/api/upload'), {
+              method: 'POST',
+              body: formData
+            });
+            const data = await res.json();
+            if (data && data.ok && data.url) {
+              imageUrl = data.url;
+            } else {
+              throw new Error((data && data.error) || 'Upload failed');
+            }
+          } catch (err) {
+            console.error('Image upload failed:', err);
+            this.add('Sorry, I couldn\'t upload your photo. Please try again.', 'assistant', messagesContainer);
+            return;
+          }
+        }
+
+        // When a photo is attached but no text was typed, give the LLM context.
+        const effectiveMessage = userMessage || (imageUrl ? 'I uploaded a photo for try-on.' : '');
+
+        // Add the user's turn to the chat: image first, then the typed text.
+        if (imageUrl && stagedPreview) {
+          const bubble = document.createElement('div');
+          bubble.className = 'shop-ai-message user shop-ai-user-with-image';
+          const img = document.createElement('img');
+          img.className = 'shop-ai-user-image';
+          img.src = stagedPreview;
+          img.alt = 'Uploaded photo';
+          bubble.appendChild(img);
+          if (effectiveMessage) {
+            const text = document.createElement('p');
+            text.textContent = effectiveMessage;
+            bubble.appendChild(text);
+          }
+          messagesContainer.appendChild(bubble);
+          ShopAIChat.UI.scrollToBottom();
+        } else {
+          this.add(effectiveMessage, 'user', messagesContainer);
+        }
+
+        // Clear the staged image (it has been consumed by this message).
+        ShopAIChat.UI.clearStagedImage();
 
         // Clear input
         chatInput.value = '';
@@ -597,9 +1015,9 @@
         ShopAIChat.UI.showTypingIndicator();
 
         try {
-          ShopAIChat.API.streamResponse(userMessage, conversationId, messagesContainer);
+          ShopAIChat.API.streamResponse(effectiveMessage, conversationId, messagesContainer, imageUrl);
         } catch (error) {
-          console.error('Error communicating with Claude API:', error);
+          console.error('Error communicating with AI API:', error);
           ShopAIChat.UI.removeTypingIndicator();
           this.add("Sorry, I couldn't process your request at the moment. Please try again later.", 'assistant', messagesContainer);
         }
@@ -820,19 +1238,24 @@
        * @param {string} userMessage - User's message text
        * @param {string} conversationId - Conversation ID for context
        * @param {HTMLElement} messagesContainer - The messages container
+       * @param {string|null} [imageUrl] - URL of an uploaded photo attached to this message
        */
-      streamResponse: async function(userMessage, conversationId, messagesContainer) {
-        let currentMessageElement = null;
+      streamResponse: async function(userMessage, conversationId, messagesContainer, imageUrl) {
+        // Per-turn state: messageElement is created lazily on the first text
+        // chunk (so the loading line appears first); loadingLine is a single
+        // reused line for all tool-use messages (condensed to one line).
+        const state = { messageElement: null, loadingLine: null };
 
         try {
           const promptType = window.shopChatConfig?.promptType || "standardAssistant";
           const requestBody = JSON.stringify({
             message: userMessage,
             conversation_id: conversationId,
-            prompt_type: promptType
+            prompt_type: promptType,
+            image_url: imageUrl || null
           });
 
-          const streamUrl = 'https://localhost:3458/chat';
+          const streamUrl = apiUrl('/chat');
           const shopId = window.shopId;
 
           const response = await fetch(streamUrl, {
@@ -849,14 +1272,6 @@
           const decoder = new TextDecoder();
           let buffer = '';
 
-          // Create initial message element
-          let messageElement = document.createElement('div');
-          messageElement.classList.add('shop-ai-message', 'assistant');
-          messageElement.textContent = '';
-          messageElement.dataset.rawText = '';
-          messagesContainer.appendChild(messageElement);
-          currentMessageElement = messageElement;
-
           // Process the stream
           while (true) {
             const { value, done } = await reader.read();
@@ -870,8 +1285,7 @@
               if (line.startsWith('data: ')) {
                 try {
                   const data = JSON.parse(line.slice(6));
-                  this.handleStreamEvent(data, currentMessageElement, messagesContainer, userMessage,
-                    (newElement) => { currentMessageElement = newElement; });
+                  this.handleStreamEvent(data, state, messagesContainer, userMessage);
                 } catch (e) {
                   console.error('Error parsing event data:', e, line);
                 }
@@ -889,12 +1303,11 @@
       /**
        * Handle stream events from the API
        * @param {Object} data - Event data
-       * @param {HTMLElement} currentMessageElement - Current message element being updated
+       * @param {{messageElement: HTMLElement|null, loadingLine: HTMLElement|null}} state - Per-turn DOM state
        * @param {HTMLElement} messagesContainer - The messages container
        * @param {string} userMessage - The original user message
-       * @param {Function} updateCurrentElement - Callback to update the current element reference
        */
-      handleStreamEvent: function(data, currentMessageElement, messagesContainer, userMessage, updateCurrentElement) {
+      handleStreamEvent: function(data, state, messagesContainer, userMessage) {
         switch (data.type) {
           case 'id':
             if (data.conversation_id) {
@@ -904,14 +1317,30 @@
 
           case 'chunk':
             ShopAIChat.UI.removeTypingIndicator();
-            currentMessageElement.dataset.rawText += data.chunk;
-            currentMessageElement.textContent = currentMessageElement.dataset.rawText;
+            // Create the assistant text bubble lazily on the first chunk so the
+            // loading line (rendered earlier) stays above the text response.
+            if (!state.messageElement) {
+              state.messageElement = document.createElement('div');
+              state.messageElement.classList.add('shop-ai-message', 'assistant');
+              state.messageElement.textContent = '';
+              state.messageElement.dataset.rawText = '';
+              messagesContainer.appendChild(state.messageElement);
+            }
+            state.messageElement.dataset.rawText += data.chunk;
+            state.messageElement.textContent = state.messageElement.dataset.rawText;
             ShopAIChat.UI.scrollToBottom();
             break;
 
           case 'message_complete':
             ShopAIChat.UI.removeTypingIndicator();
-            ShopAIChat.Formatting.formatMessageContent(currentMessageElement);
+            if (state.messageElement) {
+              ShopAIChat.Formatting.formatMessageContent(state.messageElement);
+            }
+            // The answer is in — remove the single loading line.
+            if (state.loadingLine && state.loadingLine.parentNode) {
+              state.loadingLine.parentNode.removeChild(state.loadingLine);
+            }
+            state.loadingLine = null;
             ShopAIChat.UI.scrollToBottom();
             break;
 
@@ -922,13 +1351,21 @@
           case 'error':
             console.error('Stream error:', data.error);
             ShopAIChat.UI.removeTypingIndicator();
-            currentMessageElement.textContent = "Sorry, I couldn't process your request. Please try again later.";
+            if (state.messageElement) {
+              state.messageElement.textContent = "Sorry, I couldn't process your request. Please try again later.";
+            } else {
+              ShopAIChat.Message.add("Sorry, I couldn't process your request. Please try again later.", 'assistant', messagesContainer);
+            }
             break;
 
           case 'rate_limit_exceeded':
             console.error('Rate limit exceeded:', data.error);
             ShopAIChat.UI.removeTypingIndicator();
-            currentMessageElement.textContent = "Sorry, our servers are currently busy. Please try again later.";
+            if (state.messageElement) {
+              state.messageElement.textContent = "Sorry, our servers are currently busy. Please try again later.";
+            } else {
+              ShopAIChat.Message.add("Sorry, our servers are currently busy. Please try again later.", 'assistant', messagesContainer);
+            }
             break;
 
           case 'auth_required':
@@ -972,25 +1409,36 @@
             break;
 
           case 'tool_use':
+            // Reuse a single loading line so repeated tool messages collapse
+            // into one chat line, always rendered before the text response.
             if (data.tool_use_message) {
-              ShopAIChat.Message.addToolUse(data.tool_use_message, messagesContainer);
+              if (!state.loadingLine) {
+                state.loadingLine = document.createElement('div');
+                state.loadingLine.classList.add('shop-ai-message', 'tool-use');
+                state.loadingLine.textContent = data.tool_use_message;
+                messagesContainer.appendChild(state.loadingLine);
+                ShopAIChat.UI.scrollToBottom();
+              } else {
+                state.loadingLine.textContent = data.tool_use_message;
+              }
             }
             break;
 
-          case 'new_message':
-            ShopAIChat.Formatting.formatMessageContent(currentMessageElement);
+          case 'new_message': {
+            if (state.messageElement) {
+              ShopAIChat.Formatting.formatMessageContent(state.messageElement);
+            }
             ShopAIChat.UI.showTypingIndicator();
 
-            // Create new message element for the next response
+            // Create a new assistant element for the next response.
             const newMessageElement = document.createElement('div');
             newMessageElement.classList.add('shop-ai-message', 'assistant');
             newMessageElement.textContent = '';
             newMessageElement.dataset.rawText = '';
             messagesContainer.appendChild(newMessageElement);
-
-            // Update the current element reference
-            updateCurrentElement(newMessageElement);
+            state.messageElement = newMessageElement;
             break;
+          }
 
           case 'content_block_complete':
             ShopAIChat.UI.showTypingIndicator();
@@ -1012,7 +1460,7 @@
           messagesContainer.appendChild(loadingMessage);
 
           // Fetch history from the server
-          const historyUrl = `https://localhost:3458/chat?history=true&conversation_id=${encodeURIComponent(conversationId)}`;
+          const historyUrl = apiUrl('/chat') + `?history=true&conversation_id=${encodeURIComponent(conversationId)}`;
           console.log('Fetching history from:', historyUrl);
 
           const response = await fetch(historyUrl, {
@@ -1036,7 +1484,7 @@
 
           // No messages, show welcome message
           if (!data.messages || data.messages.length === 0) {
-            const welcomeMessage = window.shopChatConfig?.welcomeMessage || "👋 Hi there! How can I help you today?";
+            const welcomeMessage = getWelcomeMessage();
             ShopAIChat.Message.add(welcomeMessage, 'assistant', messagesContainer);
             return;
           }
@@ -1098,9 +1546,37 @@
           // Show error and welcome message. IMPORTANT: do NOT clear the
           // conversation ID here — a transient fetch error shouldn't lose the
           // customer's history. Keep it so the next page load retries.
-          const welcomeMessage = window.shopChatConfig?.welcomeMessage || "👋 Hi there! How can I help you today?";
+          const welcomeMessage = getWelcomeMessage();
           ShopAIChat.Message.add(welcomeMessage, 'assistant', messagesContainer);
         }
+      },
+
+      /**
+       * Initial experience for a brand-new conversation: load a few featured
+       * products from the backend, show them above the greeting (the greeting
+       * references "featured products above"), then display the welcome message.
+       * @param {HTMLElement} messagesContainer
+       */
+      loadInitialExperience: async function(messagesContainer) {
+        let products = null;
+        try {
+          const response = await fetch(apiUrl('/api/featured'), {
+            headers: { 'X-Shopify-Shop-Id': window.shopId || '' }
+          });
+          const data = await response.json();
+          if (data && data.ok && Array.isArray(data.products) && data.products.length) {
+            products = data.products;
+          }
+        } catch (err) {
+          console.error('[Chat] Failed to load featured products:', err);
+        }
+
+        if (products && products.length) {
+          ShopAIChat.UI.displayProductResults(products, 'New products');
+        }
+
+        const welcomeMessage = getWelcomeMessage();
+        ShopAIChat.Message.add(welcomeMessage, 'assistant', messagesContainer);
       }
     },
 
@@ -1188,7 +1664,7 @@
           attemptCount++;
 
           try {
-            const tokenUrl = 'https://localhost:3458/auth/token-status?conversation_id=' +
+            const tokenUrl = apiUrl('/auth/token-status') + '?conversation_id=' +
               encodeURIComponent(conversationId);
             const response = await fetch(tokenUrl);
 
@@ -1503,6 +1979,8 @@
     TryOn: {
       state: {
         currentProduct: null,
+        stagedFile: null,
+        stagedPreview: null,
         poseDetector: null,
         isLoading: false,
         mediaPipeLoaded: false
@@ -1514,6 +1992,13 @@
         if (!product.image_url) {
           ShopAIChat.Message.add("This product doesn't have a preview image for try-on.", 'assistant',
             ShopAIChat.UI.elements.messagesContainer);
+          return;
+        }
+
+        // If the customer staged a photo via the upload icon, use it directly
+        // instead of showing the upload modal again.
+        if (this.state.stagedFile) {
+          this.handleFile(this.state.stagedFile);
           return;
         }
 
@@ -1644,7 +2129,7 @@
           var conversationId = sessionStorage.getItem('shopAiConversationId');
           if (conversationId) payload.conversation_id = conversationId;
 
-          var response = await fetch('https://localhost:3458/api/tryon/pairings', {
+          var response = await fetch(apiUrl('/api/tryon/pairings'), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1676,7 +2161,7 @@
         var conversationId = sessionStorage.getItem('shopAiConversationId');
         if (conversationId) formData.append('conversation_id', conversationId);
 
-        var response = await fetch('https://localhost:3458/api/tryon/2d', {
+        var response = await fetch(apiUrl('/api/tryon/2d'), {
           method: 'POST',
           body: formData
         });
@@ -1723,7 +2208,7 @@
           var conversationId = sessionStorage.getItem('shopAiConversationId');
           if (conversationId) formData.append('conversation_id', conversationId);
 
-          var response = await fetch('https://localhost:3458/api/tryon/2d', {
+          var response = await fetch(apiUrl('/api/tryon/2d'), {
             method: 'POST',
             body: formData
           });
@@ -1826,7 +2311,7 @@
           var conversationId = sessionStorage.getItem('shopAiConversationId');
           if (conversationId) payload.conversation_id = conversationId;
 
-          var response = await fetch('https://localhost:3458/api/tryon/3d', {
+          var response = await fetch(apiUrl('/api/tryon/3d'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -1865,9 +2350,9 @@
         // Fetch conversation history
         this.API.fetchChatHistory(conversationId, this.UI.elements.messagesContainer);
       } else {
-        // No previous conversation, show welcome message
-        const welcomeMessage = window.shopChatConfig?.welcomeMessage || "👋 Hi there! How can I help you today?";
-        this.Message.add(welcomeMessage, 'assistant', this.UI.elements.messagesContainer);
+        // No previous conversation: load featured products first (the greeting
+        // references "featured products above"), then show the welcome message.
+        this.API.loadInitialExperience(this.UI.elements.messagesContainer);
       }
     }
   };

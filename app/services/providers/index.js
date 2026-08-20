@@ -59,13 +59,14 @@ export function getTryonOpenAiTools() {
       function: {
         name: "tryon_2d",
         description:
-          "Run a 2D virtual try-on: compose a store product with a person photo using the image-edit model. IMPORTANT: before calling this tool, confirm the desired placement with the customer (e.g. 'holding' the product, 'wearing' it, or 'next to' them) and only call once they confirm. Requires a public URL (or previously uploaded) person photo and a product image URL from the catalog.",
+          "Run a 2D virtual try-on: compose a store product with a person photo using the image-edit model. IMPORTANT: before calling this tool, confirm the desired placement with the customer (e.g. 'holding' the product, 'wearing' it, or 'next to' them) and only call once they confirm. If the customer already uploaded a photo (via the chat's image icon), you can OMIT person_image_url — it will be used automatically. Otherwise require a public URL of the customer's photo and a product image URL from the catalog.",
         parameters: {
           type: "object",
           properties: {
             person_image_url: {
               type: "string",
-              description: "HTTPS URL of the customer's photo (full body preferred).",
+              description:
+                "HTTPS URL of the customer's photo (full body preferred). OPTIONAL if the customer already uploaded a photo in the chat.",
             },
             product_image_url: {
               type: "string",
@@ -86,7 +87,7 @@ export function getTryonOpenAiTools() {
               description: "Optional editing instruction override.",
             },
           },
-          required: ["person_image_url", "product_image_url"],
+          required: ["product_image_url"],
         },
       },
     },
