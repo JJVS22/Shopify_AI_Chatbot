@@ -21,6 +21,14 @@ import {
 } from "../services/providers/custom/tools";
 import { findPairingProducts } from "../services/pairings.server";
 
+/**
+ * In-memory cache for the "what does this store sell" catalog context, keyed by
+ * shop domain. Building it requires a full search_catalog MCP call, so we reuse
+ * it across messages instead of making that round trip on every single input.
+ */
+const storeContextCache = new Map();
+const STORE_CONTEXT_TTL = 10 * 60 * 1000; // 10 minutes
+
 export async function loader({ request }) {
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -160,8 +168,8 @@ async function handleChatSession({
 
     let storeContext = null;
     try {
-      storeContext = await buildStoreContext(mcpClient);
-      if (storeContext) console.log('[Chat] Store context built for LLM');
+      storeContext = await buildStoreContext(mcpClient, shopDomain);
+      if (storeContext) console.log('[Chat] Store context ready for LLM');
     } catch (err) {
       console.warn('[Chat] Failed to build store context:', err.message);
     }
@@ -390,14 +398,23 @@ async function handleChatSession({
 
 /**
  * Build a short "what does this store sell" context for the LLM by doing one
- * catalog search, so it doesn't invent unrelated products.
+ * catalog search, so it doesn't invent unrelated products. The result is cached
+ * per shop domain so we don't re-run a catalog search on every message.
  * @param {MCPClient} mcpClient
+ * @param {string} [shopDomain]
  * @returns {Promise<string|null>}
  */
-async function buildStoreContext(mcpClient) {
+async function buildStoreContext(mcpClient, shopDomain = "") {
   if (!mcpClient || !mcpClient.tools.length) return null;
   if (!mcpClient.storefrontTools.some((t) => t.name === AppConfig.tools.productSearchName)) {
     return null;
+  }
+
+  const cacheKey = shopDomain || "default";
+  const cached = storeContextCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < STORE_CONTEXT_TTL) {
+    console.log(`[Chat] Using cached store context for ${cacheKey || 'unknown shop'}`);
+    return cached.context;
   }
 
   const res = await mcpClient.callTool(AppConfig.tools.productSearchName, {
@@ -415,11 +432,16 @@ async function buildStoreContext(mcpClient) {
     .map((p) => p.title || "Untitled product")
     .join("\n- ");
 
-  return (
+  const context = (
     `The store sells the following products (catalog preview):\n- ${titles}\n` +
     `Recommend ONLY products available in this store. Before suggesting products, ` +
     `confirm availability with the search_catalog tool.`
   );
+
+  storeContextCache.set(cacheKey, { context, timestamp: Date.now() });
+  console.log(`[Chat] Store context built & cached for ${cacheKey || 'unknown shop'}`);
+
+  return context;
 }
 
 /**

@@ -6,9 +6,9 @@ import AppConfig from "./config.server";
  * product search result parsing, and persisting tool messages to history.
  */
 export function createToolService() {
-  // Once get_product_details is confirmed to be returning non-JSON errors, stop
-  // calling it for the rest of this service's lifetime to avoid slow, noisy retries.
-  let detailsResolveBroken = false;
+  // Cache of resolved product URLs keyed by product id/GID, so we never make
+  // more than one get_product_details call per product in a session.
+  const urlCache = new Map();
 
   /**
    * Handle a failed MCP tool call: persist the error to conversation history
@@ -118,11 +118,14 @@ export function createToolService() {
             }
 
             const rawProducts = responseData.products.slice(0, AppConfig.tools.maxProductsToDisplay);
-            products = [];
-            for (const rawProduct of rawProducts) {
-              const url = await resolveProductUrl(rawProduct, mcpClient);
-              products.push(formatProductData(rawProduct, url));
-            }
+            // Resolve all product URLs in parallel; resolveProductUrl now does
+            // at most one (cached) MCP call per product instead of 5 sequential.
+            products = await Promise.all(
+              rawProducts.map(async (rawProduct) => {
+                const url = await resolveProductUrl(rawProduct, mcpClient);
+                return formatProductData(rawProduct, url);
+              })
+            );
 
             console.log(`[Tool] Formatted ${products.length} products`);
             if (products.length > 0) {
@@ -146,67 +149,66 @@ export function createToolService() {
   };
 
   /**
-   * Build a real, clickable storefront URL for a product.
-   * Prefers an absolute URL or handle from the search result; otherwise
-   * queries get_product_details to find the handle (numeric-id /products/<id>
-   * paths are not valid Shopify product links).
+   * Resolve a clickable storefront URL for a product.
+   *
+   * Order of preference:
+   *   1. Absolute URL already present in the search result
+   *   2. A handle from the search result  →  /products/<handle>
+   *   3. Any /products/ path (handle- or numeric-id based) — Shopify redirects
+   *      /products/<numeric-id> to the canonical handle URL, so it is a valid link
+   *   4. A single, cached get_product_details lookup as a last resort
+   *
+   * NOTE: this used to loop through 5 sequential get_product_details calls per
+   * product (up to ~50 MCP round-trips per catalog search). That made every chat
+   * turn extremely slow, so it is now one attempt, cached by product id.
    * @param {Object} product - raw catalog product
    * @param {Object} [mcpClient] - MCPClient instance
    * @returns {Promise<string>} absolute URL or "/products/<handle>", or "" if unknown
    */
   const resolveProductUrl = async (product, mcpClient) => {
-    // Direct absolute URLs or handle-based paths from the search response
     const direct = extractProductUrl(product);
     if (direct && /^https?:\/\//i.test(direct)) return direct;
     if (product.handle) return `/products/${product.handle}`;
-    if (direct && direct.startsWith('/products/') && !/\/products\/\d+$/.test(direct)) {
-      return direct; // handle-based path, not a numeric-id fallback
+    if (direct && direct.startsWith('/products/')) {
+      return direct; // handle-based or numeric-id path (both are valid Shopify links)
     }
 
-    // Try to get the real handle/URL via get_product_details
-    if (!detailsResolveBroken && mcpClient && (product.id || product.product_id)) {
-      const gid = product.id || product.product_id;
-      const numericId = String(gid).replace(/^gid:\/\/shopify\/Product\//, '');
-      const attempts = [
-        { product_id: gid },
-        { catalog: { product_id: gid } },
-        { product_id: numericId },
-        { id: gid },
-        { catalog: { id: gid } },
-      ];
-      for (const args of attempts) {
-        try {
-          const res = await mcpClient.callTool('get_product_details', args);
-          const text = res?.content?.[0]?.text;
+    const gid = product.id || product.product_id;
+    if (!gid) return '';
 
-          // Some MCP servers return an error string (e.g. "Missing required ...")
-          // instead of JSON. Log it fully and move on rather than crashing.
-          if (!text) continue;
-          if (typeof text !== 'string') {
-            const obj = text?.product || text?.products?.[0] || text;
-            const url = obj?.url || obj?.onlineStoreUrl || obj?.online_store_url;
-            if (url && /^https?:\/\//i.test(String(url))) return String(url);
-            if (obj?.handle) return `/products/${obj.handle}`;
-            continue;
+    if (urlCache.has(gid)) return urlCache.get(gid);
+
+    let resolved = direct || '';
+    if (mcpClient) {
+      try {
+        const res = await mcpClient.callTool('get_product_details', { product_id: gid });
+        const text = res?.content?.[0]?.text;
+        if (text) {
+          let obj = text;
+          if (typeof text === 'string') {
+            const trimmed = text.trim();
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+              obj = JSON.parse(trimmed);
+            } else {
+              console.warn('[Tool] get_product_details non-JSON response:', trimmed.slice(0, 200));
+              obj = null;
+            }
           }
-          const trimmed = text.trim();
-          if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-            console.warn('[Tool] get_product_details non-JSON response:', trimmed.slice(0, 200));
-            detailsResolveBroken = true;
-            break;
-          }
-          const data = JSON.parse(trimmed);
-          const detail = data?.product || data?.products?.[0] || data;
+          const detail = obj?.product || obj?.products?.[0] || obj;
           const url = detail?.url || detail?.onlineStoreUrl || detail?.online_store_url;
-          if (url && /^https?:\/\//i.test(String(url))) return String(url);
-          if (detail?.handle) return `/products/${detail.handle}`;
-        } catch (err) {
-          console.warn('[Tool] get_product_details failed:', err.message);
+          if (url && /^https?:\/\//i.test(String(url))) {
+            resolved = String(url);
+          } else if (detail?.handle) {
+            resolved = `/products/${detail.handle}`;
+          }
         }
+      } catch (err) {
+        console.warn('[Tool] get_product_details failed:', err.message);
       }
     }
 
-    return ''; // unknown — no broken link
+    urlCache.set(gid, resolved);
+    return resolved;
   };
 
   /**
