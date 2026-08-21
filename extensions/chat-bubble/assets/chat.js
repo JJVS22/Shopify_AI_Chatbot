@@ -17,7 +17,7 @@
   function getApiBaseUrl() {
     var configured = window.shopChatConfig && window.shopChatConfig.apiBaseUrl;
     var fallback = window.shopChatConfig && window.shopChatConfig.appUrl;
-    var base = configured || fallback || 'https://ai-tryon.maxlochunhang.com/';
+    var base = configured || fallback || 'https://localhost:3458';
     return String(base || '').replace(/\/+$/, '');
   }
 
