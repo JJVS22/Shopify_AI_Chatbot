@@ -15,8 +15,8 @@
    * the localhost fallback exists so the chat works out of the box in dev.
    */
   function getApiBaseUrl() {
-    var configured = window.shopChatConfig && window.shopChatConfig.apiBaseUrl;
-    var fallback = window.shopChatConfig && window.shopChatConfig.appUrl;
+    var configured = 'https://ai-tryon.maxlochunhang.com/';
+    var fallback = 'https://ai-tryon.maxlochunhang.com/';
     var base = configured || fallback || 'https://ai-tryon.maxlochunhang.com/';
     return String(base || '').replace(/\/+$/, '');
   }
