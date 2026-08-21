@@ -123,144 +123,171 @@ export default function Tickets() {
         </select>
       </s-section>
 
-      <s-section>
+      <s-section padding={tickets.length === 0 ? undefined : "none"}>
         {tickets.length === 0 ? (
           <s-paragraph>
             No support tickets yet. When a customer fills the callback form or
             requests human support in the chat, the request appears here.
           </s-paragraph>
         ) : (
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: "14px",
-            }}
-          >
-            <thead>
-              <tr style={{ textAlign: "left" }}>
-                <th style={thStyle}>Created</th>
-                <th style={thStyle}>Type</th>
-                <th style={thStyle}>Status</th>
-                <th style={thStyle}>Summary</th>
-                <th style={thStyle}>Customer</th>
-                <th style={thStyle}>Contact / Order</th>
-                <th style={thStyle}>Callback time</th>
-                <th style={thStyle}>Conversation</th>
-                <th style={thStyle}>Update status</th>
-                <th style={thStyle}>Delete</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tickets.map((ticket) => (
-                <tr key={ticket.id} style={{ borderTop: "1px solid #e3e3e3" }}>
-                  <td style={tdStyle}>{formatDate(ticket.createdAt)}</td>
-                  <td style={tdStyle}>
-                    {labels.TICKET_TYPE_LABELS[ticket.type] || ticket.type}
-                  </td>
-                  <td style={tdStyle}>
-                    <span
-                      style={{
-                        display: "inline-block",
-                        padding: "2px 8px",
-                        borderRadius: "999px",
-                        fontSize: "12px",
-                        fontWeight: 600,
-                        background:
-                          ticket.status === "open"
-                            ? "#ffece5"
-                            : ticket.status === "in_progress"
-                              ? "#fff3cd"
-                              : ticket.status === "resolved"
-                                ? "#e3f1df"
-                                : "#ececec",
-                      }}
-                    >
-                      {labels.STATUS_LABELS[ticket.status] || ticket.status}
-                    </span>
-                  </td>
-                  <td style={tdStyle}>{ticket.summary || "—"}</td>
-                  <td style={tdStyle}>
-                    {[ticket.customerName, ticket.customerEmail]
-                      .filter(Boolean)
-                      .join(" · ") || "—"}
-                  </td>
-                  <td style={tdStyle}>
-                    {[ticket.contactPhone, ticket.orderRef ? `Order ${ticket.orderRef}` : ""]
-                      .filter(Boolean)
-                      .join(" · ") || "—"}
-                  </td>
-                  <td style={tdStyle}>
-                    {ticket.callTime ? formatDate(ticket.callTime) : "—"}
-                  </td>
-                  <td style={tdStyle}>
-                    {ticket.conversationId ? (
-                      <code style={{ fontSize: "12px" }}>
-                        {String(ticket.conversationId).slice(0, 16)}
-                      </code>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td style={tdStyle}>
-                    <Form method="post" style={{ display: "inline-flex", gap: 4 }}>
-                      <input type="hidden" name="ticket_id" value={ticket.id} />
-                      <input type="hidden" name="intent" value="status" />
-                      <select
-                        name="status"
-                        defaultValue={ticket.status}
-                        style={{ padding: "4px 6px", fontSize: "13px" }}
-                      >
-                        {TICKET_STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {labels.STATUS_LABELS[s]}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="submit"
-                        style={{
-                          padding: "4px 10px",
-                          fontSize: "13px",
-                          cursor: "pointer",
-                        }}
-                      >
-                        Save
-                      </button>
-                    </Form>
-                  </td>
-                  <td style={tdStyle}>
-                    <Form
-                      method="post"
-                      onSubmit={(e) => {
-                        if (
-                          !window.confirm(
-                            "Delete this support ticket? This cannot be undone."
-                          )
-                        ) {
-                          e.preventDefault();
-                        }
-                      }}
-                    >
-                      <input type="hidden" name="ticket_id" value={ticket.id} />
-                      <input type="hidden" name="intent" value="delete" />
-                      <button
-                        type="submit"
-                        style={{
-                          padding: "4px 10px",
-                          fontSize: "13px",
-                          cursor: "pointer",
-                          color: "#b3231e",
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </Form>
-                  </td>
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                minWidth: 900,
+                borderCollapse: "collapse",
+                fontSize: "14px",
+              }}
+            >
+              <thead>
+                <tr style={{ textAlign: "left" }}>
+                  <th style={thStyle}>Created</th>
+                  <th style={thStyle}>Type</th>
+                  <th style={thStyle}>Status</th>
+                  <th style={thStyle}>Summary</th>
+                  <th style={thStyle}>Customer / contact</th>
+                  <th style={thStyle}>Callback time</th>
+                  <th style={thStyle}>Conversation</th>
+                  <th style={thStyle}>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {tickets.map((ticket) => (
+                  <tr key={ticket.id} style={{ borderTop: "1px solid #e3e3e3" }}>
+                    <td style={tdStyle}>{formatDate(ticket.createdAt)}</td>
+                    <td style={tdStyle}>
+                      {labels.TICKET_TYPE_LABELS[ticket.type] || ticket.type}
+                    </td>
+                    <td style={tdStyle}>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "2px 8px",
+                          borderRadius: "999px",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          background:
+                            ticket.status === "open"
+                              ? "#ffece5"
+                              : ticket.status === "in_progress"
+                                ? "#fff3cd"
+                                : ticket.status === "resolved"
+                                  ? "#e3f1df"
+                                  : "#ececec",
+                        }}
+                      >
+                        {labels.STATUS_LABELS[ticket.status] || ticket.status}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle, maxWidth: 260 }}>
+                      <div
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          maxWidth: 260,
+                        }}
+                        title={ticket.summary || ""}
+                      >
+                        {ticket.summary || "—"}
+                      </div>
+                    </td>
+                    <td style={tdStyle}>
+                      <div>
+                        {[ticket.customerName, ticket.customerEmail]
+                          .filter(Boolean)
+                          .join(" · ") || "—"}
+                      </div>
+                      {(ticket.contactPhone || ticket.orderRef) && (
+                        <div style={{ fontSize: "12px", color: "#666", marginTop: 2 }}>
+                          {[ticket.contactPhone, ticket.orderRef ? `Order ${ticket.orderRef}` : ""]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      )}
+                    </td>
+                    <td style={tdStyle}>
+                      {ticket.callTime ? formatDate(ticket.callTime) : "—"}
+                    </td>
+                    <td style={tdStyle}>
+                      {ticket.conversationId ? (
+                        <code
+                          style={{ fontSize: "12px" }}
+                          title={ticket.conversationId}
+                        >
+                          {String(ticket.conversationId).slice(0, 12)}
+                        </code>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <Form method="post" style={{ display: "inline-flex", gap: 4 }}>
+                          <input type="hidden" name="ticket_id" value={ticket.id} />
+                          <input type="hidden" name="intent" value="status" />
+                          <select
+                            name="status"
+                            defaultValue={ticket.status}
+                            style={{ padding: "4px 6px", fontSize: "13px" }}
+                          >
+                            {TICKET_STATUSES.map((s) => (
+                              <option key={s} value={s}>
+                                {labels.STATUS_LABELS[s]}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="submit"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "13px",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Save
+                          </button>
+                        </Form>
+                        <Form
+                          method="post"
+                          onSubmit={(e) => {
+                            if (
+                              !window.confirm(
+                                "Delete this support ticket? This cannot be undone."
+                              )
+                            ) {
+                              e.preventDefault();
+                            }
+                          }}
+                        >
+                          <input type="hidden" name="ticket_id" value={ticket.id} />
+                          <input type="hidden" name="intent" value="delete" />
+                          <button
+                            type="submit"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "13px",
+                              cursor: "pointer",
+                              color: "#b3231e",
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </Form>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </s-section>
     </s-page>

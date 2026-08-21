@@ -28,6 +28,7 @@ export async function run2dTryon({
   prompt,
   productTitle,
   placement,
+  bodyPart,
   originalProductTitle,
   conversationId,
 }) {
@@ -38,6 +39,11 @@ export async function run2dTryon({
   let effectivePrompt = prompt;
   if (placement === "pairing" && originalProductTitle && productTitle) {
     effectivePrompt = buildPairingPrompt(originalProductTitle, productTitle);
+  } else if (!placement || placement === "wearing") {
+    // Region-aware prompt: classify the product's body part (upper body / lower
+    // body / full body / head / arms / legs / foot) from its name and tell the
+    // model exactly where to put it — while keeping the person fully in frame.
+    effectivePrompt = buildWearingPrompt(productTitle, bodyPart, prompt);
   }
 
   const result = await provider.editImage({
@@ -171,6 +177,9 @@ export async function handleTryonToolCall(toolName, toolArgs, conversationId) {
       prompt: toolArgs.prompt,
       productTitle: toolArgs.product_title,
       placement: toolArgs.placement,
+      // The LLM classifies the product's body part; fall back to deriving it
+      // from the product name server-side.
+      bodyPart: toolArgs.body_part || null,
       conversationId,
     });
     return {
@@ -212,6 +221,8 @@ export function isTryonTool(name) {
   return name === "tryon_2d" || name === "tryon_3d";
 }
 
+export { classifyBodyRegion };
+
 /**
  * Convert a relative public path (e.g. /api/tryon/results/...) into an absolute
  * URL using the configured app URL; passes through existing absolute URLs.
@@ -239,6 +250,143 @@ const INNER_LAYERS = [
 ];
 
 /**
+ * Which part of the body a product is worn on. Used to build a precise 2D
+ * try-on prompt so the image-edit model places the item correctly (and does
+ * not crop out the person or redesign the garment).
+ */
+const BODY_REGION_PHRASES = [
+  { region: "foot", words: ["high top", "ankle boot", "hiking boot", "running shoe", "soccer cleat", "flip flop", "flip-flop"] },
+  { region: "upper_body", words: ["short sleeve", "long sleeve", "crop top", "tank top", "t-shirt", "t shirt", "dress shirt", "polo shirt", "sleeveless top", "zip hoodie", "zip-up", "zip up", "work shirt", "waist coat", "waistcoat", "button down", "button-down", "tee shirt"] },
+  { region: "lower_body", words: ["sweat pant", "sweatpant", "jean short", "jeans short", "basketball short", "gym short", "running short", "high waist", "high-waist", "high rise", "high-rise", "low rise", "low-rise"] },
+  { region: "full_body", words: ["one piece", "one-piece", "track suit", "tracksuit", "swim suit", "swimwear", "ball gown", "wedding dress", "night gown", "body suit", "bodysuit", "bikini", "bekini"] },
+  { region: "head", words: ["baseball cap", "sun hat", "bucket hat", "beanie", "earmuff", "fedora"] },
+  { region: "legs", words: ["knee high", "knee-high", "thigh high", "thigh-high", "leg warmer", "legwarmer", "ankle sock", "crew sock", "knee sock"] },
+  { region: "arms", words: ["arm warmer", "armwarmer", "wrist band", "wristband", "elbow pad", "arm sleeve", "fingerless glove", "glove"] },
+];
+
+const BODY_REGION_WORDS = {
+  head: ["hat", "cap", "beanie", "beret", "headband", "headpiece", "headdress", "crown", "bandana", "bandanna", "helmet", "visor", "sunglasses", "glasses", "tiara", "headscarf", "hairband", "hair clip", "hairpin"],
+  arms: ["gloves", "mitten", "mittens", "wristband", "armwarmer"],
+  foot: ["shoes", "sneaker", "sneakers", "trainers", "trainer", "boots", "boot", "sandals", "sandal", "slippers", "slipper", "heels", "heel", "pumps", "pump", "loafers", "loafer", "mules", "mule", "clogs", "clog", "footwear", "cleats", "cleat", "yeezy"],
+  legs: ["socks", "sock", "tights", "stocking", "stockings", "hose", "garter", "knee pad", "kneepad"],
+  lower_body: ["pants", "pant", "trousers", "trouser", "jeans", "jean", "shorts", "short", "skirt", "leggings", "legging", "joggers", "jogger", "sweatpants", "sweatpants", "culottes", "culotte", "briefs", "brief", "boxers", "boxer", "underwear", "trunks", "trunk", "skort", "dungarees", "dungaree", "bottoms", "waist"],
+  upper_body: ["shirt", "tee", "tops", "top", "tank", "blouse", "polo", "henley", "sweater", "sweatshirt", "hoodie", "jacket", "coat", "blazer", "cardigan", "vest", "parka", "puffer", "windbreaker", "jersey", "jumper", "pullover", "camisole", "kimono", "gilet", "waistcoat", "tunic", "singlet", "bra", "tuxedo", "tux", "chest", "torso", "bodice"],
+  full_body: ["dress", "gown", "romper", "jumpsuit", "overall", "overalls", "coverall", "onesie", "swimsuit", "swimwear", "tracksuit", "suit", "costume", "outfit", "uniform", "playsuit"],
+};
+
+/**
+ * Classify which body region a product belongs to based on its name/type.
+ * Multi-word phrases are matched first (more specific), then single words.
+ * @param {string} productTitle
+ * @returns {string|null} one of: head, upper_body, lower_body, full_body,
+ *   arms, legs, foot — or null when nothing matches.
+ */
+function classifyBodyRegion(productTitle) {
+  const title = String(productTitle || "").toLowerCase();
+  if (!title.trim()) return null;
+
+  for (const { region, words } of BODY_REGION_PHRASES) {
+    for (const w of words) {
+      if (title.includes(w)) return region;
+    }
+  }
+  for (const region of Object.keys(BODY_REGION_WORDS)) {
+    for (const w of BODY_REGION_WORDS[region]) {
+      if (title.includes(w)) return region;
+    }
+  }
+  return null;
+}
+
+/**
+ * Precise, region-aware prompts for the 2D try-on model. Each one first tells
+ * the model to detect the person's body parts (head, arms, chest, waist, legs,
+ * feet), then states exactly which part to dress, requires the person to stay
+ * fully in frame, and requires the garment to stay exactly as shown in the
+ * product image.
+ */
+const BODY_DETECTION =
+  "STEP 1 — DETECT THE PERSON: look at image 1 (the person) and locate their body parts: head, face, shoulders, chest, waist, arms, hands, legs, knees, and feet. " +
+  "STEP 2 — DETECT THE PRODUCT: look at image 2 (the product) and identify the single product/garment (ignore its background, any model/mannequin wearing it, and any other objects). ";
+
+const KEEP_PERSON_IN_FRAME =
+  "KEEP the person fully in the frame from head to toe — never crop, zoom in, cut off, remove, or replace the person; their face, identity, body shape, pose, hands, and background stay exactly unchanged. ";
+
+const KEEP_GARMENT =
+  "Keep the product's design, color, pattern, logo, and details exactly as shown in image 2 — do NOT redesign, recolor, or replace it. ";
+
+const REGION_PROMPTS = {
+  head:
+    BODY_DETECTION +
+    "The product belongs on the person's HEAD (e.g. a hat, cap, or beanie sits on TOP of the head, above the face and between the ears). " +
+    "Place ONLY that product on the person's head at the correct angle, matching their natural pose. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic fit and lighting.",
+  upper_body:
+    BODY_DETECTION +
+    "The product is an UPPER-BODY garment (e.g. shirt, t-shirt, jacket, sweater, hoodie). " +
+    "Dress the person with it so it covers the CHEST and torso, the sleeves go onto the arms, and the hem ends at the WAIST — it must NOT extend below the hips or cover the legs. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic fit, draping, lighting, and shadows.",
+  arms:
+    BODY_DETECTION +
+    "The product belongs on the person's ARMS and HANDS (e.g. gloves on the hands, arm warmers on the forearms). " +
+    "Place it on BOTH arms/hands correctly (left glove on the left hand, right glove on the right hand), following their pose. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic fit and lighting.",
+  lower_body:
+    BODY_DETECTION +
+    "The product is a LOWER-BODY garment (e.g. pants, jeans, shorts, skirt, leggings). " +
+    "Dress the person with it so it starts at the WAIST and covers the hips and LEGS — it must NOT cover the chest or upper body. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic fit, draping, lighting, and shadows.",
+  legs:
+    BODY_DETECTION +
+    "The product belongs on the person's LEGS below the knee (e.g. socks, tights, stockings covering the calves and ankles). " +
+    "Place it on BOTH legs correctly (left sock on the left leg, right sock on the right leg), following their pose. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic fit and lighting.",
+  foot:
+    BODY_DETECTION +
+    "The product is FOOTWEAR for the person's FEET (e.g. shoes, sneakers, boots, sandals). " +
+    "Put the left shoe on the person's left FOOT and the right shoe on the right FOOT, aligned with the floor and their natural stance. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic fit, materials, lighting, and shadows.",
+  full_body:
+    BODY_DETECTION +
+    "The product is a FULL-BODY garment (e.g. dress, gown, jumpsuit, one-piece, romper). " +
+    "Dress the person in it so it covers the CHEST/torso and extends down over the WAIST to the LEGS as one piece. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic fit, draping, lighting, and shadows.",
+};
+
+const GENERIC_WEARING_PROMPT =
+  BODY_DETECTION +
+  "Match the product to the correct body part of the person (head, arms, chest, waist, legs, or feet) based on what the product is, and place it there following their natural pose. " +
+  KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+  "Realistic fit, draping, lighting, and shadows.";
+
+/**
+ * Build the prompt for a "wearing" 2D try-on, using the body region of the
+ * product (classified from the product name) so the model places the item
+ * accurately. A custom prompt from the LLM is appended as extra detail when
+ * provided, but the region guidance always stays.
+ * @param {string|null} productTitle
+ * @param {string|null} bodyPart - classified region; auto-detected when null
+ * @param {string|null} customPrompt - optional LLM-provided override
+ * @returns {string}
+ */
+function buildWearingPrompt(productTitle, bodyPart, customPrompt) {
+  const region = bodyPart || classifyBodyRegion(productTitle) || "generic";
+  const regionPrompt = REGION_PROMPTS[region] || GENERIC_WEARING_PROMPT;
+  const titleIntro = productTitle
+    ? `Image 1 is a person; image 2 is the product to be worn (${productTitle}). `
+    : `Image 1 is a person; image 2 is the product to be worn. `;
+  const custom = customPrompt ? ` Additional instruction from the assistant: ${customPrompt}` : "";
+  return titleIntro + regionPrompt + custom;
+}
+
+/**
  * Decide whether the added item goes under or over the original item.
  * Returns "under", "over", or "alongside" (different body regions).
  */
@@ -264,8 +412,8 @@ function buildPairingPrompt(originalTitle, addedTitle) {
   const order = inferLayerOrder(originalTitle, addedTitle);
 
   const base =
-    `The first image shows a person who is already wearing a ${originalTitle}. ` +
-    `Now add the ${addedTitle} from the second image so the person is wearing BOTH items together at the same time. ` +
+    `Image 1 is a person who is already wearing a ${originalTitle}. ` +
+    `Now add the ${addedTitle} from image 2 so the person is wearing BOTH items together at the same time. ` +
     `KEEP the ${originalTitle} exactly as it is — do NOT remove, replace, cover, or hide it. ` +
     `Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.`;
 
@@ -319,4 +467,5 @@ export default {
   run3dTryon,
   handleTryonToolCall,
   isTryonTool,
+  classifyBodyRegion,
 };

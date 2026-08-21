@@ -35,6 +35,105 @@
     return base + (path.charAt(0) === '/' ? path : '/' + path);
   }
 
+  /**
+   * Safe storage access (localStorage/sessionStorage can throw in private
+   * browsing or sandboxed contexts).
+   * @param {string} kind - 'localStorage' or 'sessionStorage'
+   */
+  function storageGet(kind, key) {
+    try { return window[kind].getItem(key); } catch (e) { return null; }
+  }
+  function storageSet(kind, key, value) {
+    try { window[kind].setItem(key, value); } catch (e) { /* ignore */ }
+  }
+  function storageRemove(kind, key) {
+    try { window[kind].removeItem(key); } catch (e) { /* ignore */ }
+  }
+
+  /**
+   * Conversation identity is kept in localStorage so it survives switching
+   * tabs/windows (sessionStorage is per-tab, which is why history appeared to
+   * disappear). The sessionStorage value is only a fallback to migrate an
+   * in-flight tab.
+   */
+  function getConversationId() {
+    return storageGet('localStorage', 'shopAiConversationId') ||
+      storageGet('sessionStorage', 'shopAiConversationId');
+  }
+  function setConversationId(id) {
+    if (!id) return;
+    storageSet('localStorage', 'shopAiConversationId', id);
+    storageRemove('sessionStorage', 'shopAiConversationId');
+  }
+  function removeConversationId() {
+    storageRemove('localStorage', 'shopAiConversationId');
+    storageRemove('sessionStorage', 'shopAiConversationId');
+  }
+  function getLastMessage() {
+    return storageGet('localStorage', 'shopAiLastMessage') ||
+      storageGet('sessionStorage', 'shopAiLastMessage');
+  }
+  function setLastMessage(msg) {
+    storageSet('localStorage', 'shopAiLastMessage', msg);
+    storageRemove('sessionStorage', 'shopAiLastMessage');
+  }
+  function removeLastMessage() {
+    storageRemove('localStorage', 'shopAiLastMessage');
+    storageRemove('sessionStorage', 'shopAiLastMessage');
+  }
+
+  /**
+   * Client-generated messages (e.g. "added to cart" confirmations) that could
+   * not be persisted yet because no conversation exists or the network call
+   * failed. They are queued here and sent with the next chat message, then
+   * persisted server-side so they survive a new-tab history restore.
+   */
+  function getPendingMessages() {
+    try {
+      const q = JSON.parse(storageGet('localStorage', 'shopAiPendingMessages') || '[]');
+      return Array.isArray(q) ? q : [];
+    } catch (e) { return []; }
+  }
+  function queuePendingMessage(role, content) {
+    try {
+      const q = getPendingMessages();
+      q.push({ role: role, content: String(content) });
+      storageSet('localStorage', 'shopAiPendingMessages', JSON.stringify(q));
+    } catch (e) { /* ignore */ }
+  }
+  function clearPendingMessages() {
+    storageRemove('localStorage', 'shopAiPendingMessages');
+  }
+
+  /**
+   * Best-effort persist of a client-generated chat message (e.g. the
+   * "added to cart" confirmation) so it is restored with the history in a
+   * new tab. When there is no conversation id yet (e.g. the customer added
+   * to cart from the featured products before chatting) or the request fails,
+   * the message is queued and sent with the next chat message instead.
+   * @param {string} role - 'assistant' or 'product'
+   * @param {string} content
+   */
+  function persistChatMessage(role, content) {
+    if (!content) return;
+    var conversationId = getConversationId();
+    if (!conversationId) {
+      queuePendingMessage(role, content);
+      return;
+    }
+    try {
+      fetch(apiUrl('/api/save-message'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: conversationId, role: role, content: content })
+      })
+        .then(function(res) {
+          if (!res.ok) queuePendingMessage(role, content);
+        })
+        .catch(function() { queuePendingMessage(role, content); });
+    } catch (e) { queuePendingMessage(role, content); }
+  }
+
   var DEFAULT_WELCOME_MESSAGE =
     "Hello there! 👋 Great to see you!\n" +
     "\n" +
@@ -69,6 +168,12 @@
    * Application namespace to prevent global scope pollution
    */
   const ShopAIChat = {
+    /**
+     * The initial "New products" cards fetched on a brand-new conversation.
+     * Sent with the first message so the server can persist them at the top
+     * of the history (restored in a new tab).
+     */
+    pendingFeaturedProducts: null,
     /**
      * UI-related elements and functionality
      */
@@ -741,7 +846,7 @@
         btn.textContent = 'Log in to continue';
         btn.addEventListener('click', function() {
           ShopAIChat.Auth.openAuthPopup(authUrl);
-          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          var conversationId = getConversationId();
           if (conversationId) {
             ShopAIChat.Auth.startTokenPolling(conversationId, messagesContainer);
           }
@@ -773,6 +878,11 @@
 
         messagesContainer.appendChild(el);
         this.scrollToBottom();
+
+        // Persist so the cart update also shows in the restored history.
+        var rawText = (data.message || 'Your cart has been updated.') +
+          ' — [Proceed to checkout](' + (data.checkout_url || '/cart') + ')';
+        persistChatMessage('assistant', rawText);
       },
 
       /**
@@ -814,9 +924,32 @@
         field('Full name', 'text', 'shop-cb-name', 'e.g. Jane Doe', true);
         field('Email', 'email', 'shop-cb-email', 'e.g. jane@example.com', false);
         field('Phone', 'tel', 'shop-cb-phone', 'e.g. +1 555 000 1234', true);
-        field('Preferred date (DD/MM/YYYY)', 'text', 'shop-cb-date', 'e.g. 24/12/2026', true);
+        var dateInput = field('Preferred date', 'date', 'shop-cb-date', '', true);
         field('Preferred time', 'time', 'shop-cb-time', '', true);
         field('Reason (optional)', 'text', 'shop-cb-reason', 'e.g. Question about an order', false);
+
+        // Disallow past dates in the native picker, and show the chosen date in
+        // DD/MM/YY format (the native input's format depends on the browser
+        // locale).
+        if (dateInput) {
+          var today = new Date();
+          var todayIso = today.getFullYear() + '-' +
+            String(today.getMonth() + 1).padStart(2, '0') + '-' +
+            String(today.getDate()).padStart(2, '0');
+          dateInput.min = todayIso;
+
+          var dateDisplay = document.createElement('span');
+          dateDisplay.classList.add('shop-ai-callback-date-display');
+          dateDisplay.textContent = '(DD/MM/YY)';
+          dateInput.parentNode.appendChild(dateDisplay);
+
+          dateInput.addEventListener('input', function() {
+            var parsed = parseISODate(dateInput.value);
+            dateDisplay.textContent = parsed
+              ? pad2(parsed.day) + '/' + pad2(parsed.month) + '/' + String(parsed.year).slice(-2)
+              : '(DD/MM/YY)';
+          });
+        }
 
         var submit = document.createElement('button');
         submit.type = 'button';
@@ -830,17 +963,18 @@
         card.appendChild(status);
 
         /**
-         * Parse a DD/MM/YYYY string into { day, month, year } after validating
-         * that it is a real calendar date (rejects 31/02, 00/13, etc.).
+         * Parse a YYYY-MM-DD string (native date input value) into
+         * { day, month, year } after validating that it is a real calendar
+         * date (rejects 31/02, 00/13, etc.).
          * @param {string} value
          * @returns {{day:number, month:number, year:number}|null}
          */
-        function parseDDMMYYYY(value) {
-          var match = String(value || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        function parseISODate(value) {
+          var match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
           if (!match) return null;
-          var day = parseInt(match[1], 10);
+          var year = parseInt(match[1], 10);
           var month = parseInt(match[2], 10);
-          var year = parseInt(match[3], 10);
+          var day = parseInt(match[3], 10);
           if (month < 1 || month > 12 || day < 1 || day > 31) return null;
           var daysInMonth = new Date(year, month, 0).getDate();
           if (day > daysInMonth) return null;
@@ -863,9 +997,9 @@
             return;
           }
 
-          var parsedDate = parseDDMMYYYY(dateValue);
+          var parsedDate = parseISODate(dateValue);
           if (!parsedDate) {
-            status.textContent = 'Please enter the date as DD/MM/YYYY (e.g. 24/12/2026).';
+            status.textContent = 'Please choose a preferred date.';
             status.style.display = 'block';
             return;
           }
@@ -898,7 +1032,7 @@
             call_time: isoDateTime,
             reason: document.getElementById('shop-cb-reason').value.trim()
           };
-          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          var conversationId = getConversationId();
           if (conversationId) payload.conversation_id = conversationId;
 
           var callbackUrl;
@@ -953,7 +1087,7 @@
        */
       send: async function(chatInput, messagesContainer) {
         const userMessage = chatInput.value.trim();
-        const conversationId = sessionStorage.getItem('shopAiConversationId');
+        const conversationId = getConversationId();
 
         const staged = ShopAIChat.TryOn.state.stagedFile;
         const stagedPreview = ShopAIChat.TryOn.state.stagedPreview;
@@ -1252,8 +1386,13 @@
             message: userMessage,
             conversation_id: conversationId,
             prompt_type: promptType,
-            image_url: imageUrl || null
+            image_url: imageUrl || null,
+            featured_products: ShopAIChat.pendingFeaturedProducts || undefined,
+            pending_messages: getPendingMessages().length ? getPendingMessages() : undefined
           });
+
+          // The featured cards are only sent with the very first message.
+          ShopAIChat.pendingFeaturedProducts = null;
 
           const streamUrl = apiUrl('/chat');
           const shopId = window.shopId;
@@ -1267,6 +1406,10 @@
             },
             body: requestBody
           });
+
+          // The server has received the request (and will persist the queued
+          // messages), so clear them to avoid duplicates on a later retry.
+          clearPendingMessages();
 
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
@@ -1303,7 +1446,7 @@
       /**
        * Handle stream events from the API
        * @param {Object} data - Event data
-       * @param {{messageElement: HTMLElement|null, loadingLine: HTMLElement|null}} state - Per-turn DOM state
+       * @param {{messageElement: HTMLElement|null, loadingLine: HTMLElement|null, pendingCallback: string|null}} state - Per-turn DOM state
        * @param {HTMLElement} messagesContainer - The messages container
        * @param {string} userMessage - The original user message
        */
@@ -1311,7 +1454,7 @@
         switch (data.type) {
           case 'id':
             if (data.conversation_id) {
-              sessionStorage.setItem('shopAiConversationId', data.conversation_id);
+              setConversationId(data.conversation_id);
             }
             break;
 
@@ -1341,11 +1484,26 @@
               state.loadingLine.parentNode.removeChild(state.loadingLine);
             }
             state.loadingLine = null;
+            // Render any callback form only now, so it appears AFTER the
+            // assistant's text response (it was buffered during the tool call).
+            if (state.pendingCallback) {
+              var callbackIntro = state.pendingCallback;
+              state.pendingCallback = null;
+              ShopAIChat.UI.displayCallbackForm(callbackIntro, messagesContainer);
+            }
             ShopAIChat.UI.scrollToBottom();
             break;
 
           case 'end_turn':
             ShopAIChat.UI.removeTypingIndicator();
+            // Fallback: if the turn ends without message_complete, still show
+            // the buffered callback form rather than dropping it.
+            if (state.pendingCallback) {
+              var callbackIntroEnd = state.pendingCallback;
+              state.pendingCallback = null;
+              ShopAIChat.UI.displayCallbackForm(callbackIntroEnd, messagesContainer);
+              ShopAIChat.UI.scrollToBottom();
+            }
             break;
 
           case 'error':
@@ -1370,7 +1528,7 @@
 
           case 'auth_required':
             // Save the last user message for resuming after authentication
-            sessionStorage.setItem('shopAiLastMessage', userMessage || '');
+            setLastMessage(userMessage || '');
 
             // Show a "Log in" button/link so the customer can authorize directly.
             if (data.auth_url) {
@@ -1405,7 +1563,10 @@
             break;
 
           case 'callback_form':
-            ShopAIChat.UI.displayCallbackForm(data.message, messagesContainer);
+            // Buffer the callback form and render it on message_complete, so
+            // it appears after the assistant's text response instead of
+            // jumping in front of it mid-stream.
+            state.pendingCallback = data.message || '';
             break;
 
           case 'tool_use':
@@ -1484,6 +1645,10 @@
 
           // No messages, show welcome message
           if (!data.messages || data.messages.length === 0) {
+            // The conversation no longer exists server-side (e.g. cleaned up
+            // after inactivity) — drop the stale id so the next visit starts
+            // a fresh conversation instead of repeating the welcome message.
+            removeConversationId();
             const welcomeMessage = getWelcomeMessage();
             ShopAIChat.Message.add(welcomeMessage, 'assistant', messagesContainer);
             return;
@@ -1573,6 +1738,9 @@
 
         if (products && products.length) {
           ShopAIChat.UI.displayProductResults(products, 'New products');
+          // Cache the cards so they can be persisted at the start of the
+          // conversation with the customer's first message.
+          ShopAIChat.pendingFeaturedProducts = products;
         }
 
         const welcomeMessage = getWelcomeMessage();
@@ -1623,7 +1791,7 @@
         }
 
         // Start polling for token availability
-        const conversationId = sessionStorage.getItem('shopAiConversationId');
+        const conversationId = getConversationId();
         if (conversationId) {
           const messagesContainer = document.querySelector('.shop-ai-chat-messages');
 
@@ -1676,10 +1844,10 @@
 
             if (data.status === 'authorized') {
               console.log('Token available, resuming conversation');
-              const message = sessionStorage.getItem('shopAiLastMessage');
+              const message = getLastMessage();
 
               if (message) {
-                sessionStorage.removeItem('shopAiLastMessage');
+                removeLastMessage();
                 setTimeout(() => {
                   ShopAIChat.Message.add("Authorization successful! I'm now continuing with your request.",
                     'assistant', messagesContainer);
@@ -1822,7 +1990,16 @@
           return '';
         }
 
-        // Build option groups from the actual variants (robust to catalog format).
+        // Stock status of a variant (true | false | null=unknown).
+        function variantAvailable(v) {
+          if (!v) return null;
+          if (v.available != null) return v.available;
+          return null;
+        }
+
+        // Build option groups from the actual variants (robust to catalog
+        // format), falling back to product-level options when variants carry
+        // none.
         const optionNames = [];
         const optionValues = {};
         variants.forEach(function(v) {
@@ -1833,8 +2010,43 @@
             if (val && optionValues[o.name].indexOf(val) === -1) optionValues[o.name].push(val);
           });
         });
+        if (optionNames.length === 0 && Array.isArray(product.options)) {
+          product.options.forEach(function(o) {
+            if (!o || !o.name || !Array.isArray(o.values) || o.values.length === 0) return;
+            const vals = [];
+            o.values.forEach(function(v) {
+              const val = (v && typeof v === 'object') ? (v.label || v.value) : v;
+              if (val && vals.indexOf(val) === -1) vals.push(val);
+            });
+            if (vals.length === 0) return;
+            optionNames.push(o.name);
+            optionValues[o.name] = vals;
+          });
+        }
         // Only show the picker when there is a real choice (an option with >1 value).
         const hasRealOptions = optionNames.some(function(n) { return optionValues[n].length > 1; });
+
+        // Stock note shown under the picker when the selected option is sold out.
+        const stockNote = document.createElement('span');
+        stockNote.classList.add('shop-ai-stock-note');
+        stockNote.style.display = 'none';
+        info.appendChild(stockNote);
+
+        // The button must be inside `info` before insertBefore can place the
+        // picker in front of it (DOMNotFoundError otherwise).
+        info.appendChild(button);
+
+        function updateSelection() {
+          const lbl = variantLabel(selectedVariant);
+          button.textContent = lbl ? 'Add to Cart (' + lbl + ')' : 'Add to Cart';
+          if (variantAvailable(selectedVariant) === false) {
+            stockNote.textContent = 'This option is currently out of stock.';
+            stockNote.style.display = 'block';
+          } else {
+            stockNote.textContent = '';
+            stockNote.style.display = 'none';
+          }
+        }
 
         if (hasRealOptions) {
           const picker = document.createElement('div');
@@ -1864,8 +2076,7 @@
                 row.querySelectorAll('.shop-ai-variant-value').forEach(function(b) {
                   b.classList.toggle('active', b.textContent === val);
                 });
-                const lbl = variantLabel(selectedVariant);
-                button.textContent = lbl ? 'Add to Cart (' + lbl + ')' : 'Add to Cart';
+                updateSelection();
               });
               row.appendChild(vbtn);
             });
@@ -1875,6 +2086,7 @@
           });
 
           info.insertBefore(picker, button);
+          updateSelection();
         }
 
         function buildCartAddedMessage(cart) {
@@ -1909,7 +2121,12 @@
           const variantId = (selectedVariant && selectedVariant.id) || product.variant_id;
 
           if (!variantId) {
-            ShopAIChat.Message.add('This product has no selectable variant to add to cart.', 'assistant', messagesContainer);
+            ShopAIChat.Message.add('Sorry, this product has no variant that can be selected for purchase.', 'assistant', messagesContainer);
+            return;
+          }
+
+          if (variantAvailable(selectedVariant) === false) {
+            ShopAIChat.Message.add('Sorry, **' + product.title + '** is currently out of stock.', 'assistant', messagesContainer);
             return;
           }
 
@@ -1932,7 +2149,11 @@
             .then(function(cart) {
               button.disabled = false;
               button.textContent = '✓ Added';
-              ShopAIChat.Message.add(buildCartAddedMessage(cart), 'assistant', messagesContainer);
+              const confirmation = buildCartAddedMessage(cart);
+              ShopAIChat.Message.add(confirmation, 'assistant', messagesContainer);
+              // Persist so the confirmation shows again with the restored
+              // history in a new tab.
+              persistChatMessage('assistant', confirmation);
             })
             .catch(function(err) {
               console.error('Add to cart failed:', err);
@@ -1945,8 +2166,6 @@
               );
             });
         });
-
-        info.appendChild(button);
 
         // Add try-on button (pairing cards use the edited photo as source)
         const tryonBtn = document.createElement('button');
@@ -2126,7 +2345,7 @@
         try {
           var payload = { product_title: productTitle };
 
-          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          var conversationId = getConversationId();
           if (conversationId) payload.conversation_id = conversationId;
 
           var response = await fetch(apiUrl('/api/tryon/pairings'), {
@@ -2158,7 +2377,7 @@
         formData.append('person_image', file);
         formData.append('product_image_url', product.image_url);
         if (product.title) formData.append('product_title', product.title);
-        var conversationId = sessionStorage.getItem('shopAiConversationId');
+        var conversationId = getConversationId();
         if (conversationId) formData.append('conversation_id', conversationId);
 
         var response = await fetch(apiUrl('/api/tryon/2d'), {
@@ -2205,7 +2424,7 @@
           formData.append('placement', 'pairing');
           if (originalProductTitle) formData.append('original_product_title', originalProductTitle);
 
-          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          var conversationId = getConversationId();
           if (conversationId) formData.append('conversation_id', conversationId);
 
           var response = await fetch(apiUrl('/api/tryon/2d'), {
@@ -2308,7 +2527,7 @@
 
         try {
           var payload = { image_url: imageUrl };
-          var conversationId = sessionStorage.getItem('shopAiConversationId');
+          var conversationId = getConversationId();
           if (conversationId) payload.conversation_id = conversationId;
 
           var response = await fetch(apiUrl('/api/tryon/3d'), {
@@ -2344,7 +2563,7 @@
       this.UI.init(container);
 
       // Check for existing conversation
-      const conversationId = sessionStorage.getItem('shopAiConversationId');
+      const conversationId = getConversationId();
 
       if (conversationId) {
         // Fetch conversation history

@@ -783,6 +783,15 @@
     color: #fff;
   }
 
+  /* Out-of-stock note under the variant picker / add-to-cart button */
+  .shop-ai-stock-note {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #b3231e;
+  }
+
   /* Add to Cart Button Styling */
   .shop-ai-add-to-cart {
     width: 100%;
@@ -1172,6 +1181,13 @@
   .shop-ai-callback-field input:focus {
     outline: none;
     border-color: #5046e4;
+  }
+
+  /* DD/MM/YY caption under the date input */
+  .shop-ai-callback-date-display {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
   }
 
   .shop-ai-callback-submit {

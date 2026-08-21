@@ -235,7 +235,11 @@ export function createToolService() {
       }
     }
 
-    return ''; // unknown — no broken link
+    // Fallback: a numeric-id path like /products/123. Shopify 301-redirects
+    // these to the product's handle URL, so it is still a working product-page
+    // link (better than no link at all for e.g. the featured products).
+    const fallback = direct && direct.startsWith('/products/') ? direct : '';
+    return fallback;
   };
 
   /**
@@ -356,7 +360,13 @@ export function createToolService() {
    * Normalize a raw product into the shape consumed by the frontend.
    */
   const formatProductData = (product, resolvedUrl) => {
-    const variants = Array.isArray(product.variants) ? product.variants : [];
+    // get_product_details returns a single "selectedOrFirstAvailableVariant"
+    // instead of a full variants array — treat it as the variant list so the
+    // add-to-cart button gets a real variant id.
+    let variants = Array.isArray(product.variants) ? product.variants : [];
+    if (variants.length === 0 && product.selectedOrFirstAvailableVariant) {
+      variants = [product.selectedOrFirstAvailableVariant];
+    }
     return {
       id: product.product_id || product.id || `product-${Math.random().toString(36).substring(7)}`,
       title: product.title || 'Product',
@@ -376,9 +386,14 @@ export function createToolService() {
       variants: variants.map((v) => ({
         id: extractProductVariantId(v),
         title: v.title || null,
+        available: v.available != null
+          ? v.available
+          : (v.availability ? v.availability.available : null),
         options: Array.isArray(v.options)
           ? v.options.map((o) => ({ name: o.name, value: o.label || o.value }))
-          : [],
+          : Array.isArray(v.selected_options)
+            ? v.selected_options.map((o) => ({ name: o.name, value: o.value }))
+            : [],
       })),
     };
   };
@@ -399,6 +414,13 @@ export function createToolService() {
       return product.variants[0].availability.available;
     }
     if (product.variants?.[0]?.available != null) return product.variants[0].available;
+    // get_product_details returns availability on the selected variant only.
+    if (product.selectedOrFirstAvailableVariant?.availability?.available != null) {
+      return product.selectedOrFirstAvailableVariant.availability.available;
+    }
+    if (product.selectedOrFirstAvailableVariant?.available != null) {
+      return product.selectedOrFirstAvailableVariant.available;
+    }
     return null; // unknown
   };
 

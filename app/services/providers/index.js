@@ -59,14 +59,14 @@ export function getTryonOpenAiTools() {
       function: {
         name: "tryon_2d",
         description:
-          "Run a 2D virtual try-on: compose a store product with a person photo using the image-edit model. IMPORTANT: before calling this tool, confirm the desired placement with the customer (e.g. 'holding' the product, 'wearing' it, or 'next to' them) and only call once they confirm. If the customer already uploaded a photo (via the chat's image icon), you can OMIT person_image_url — it will be used automatically. Otherwise require a public URL of the customer's photo and a product image URL from the catalog.",
+          "Run a 2D virtual try-on: compose a store product with a person photo. IMPORTANT: before calling this tool, confirm the desired placement with the customer (e.g. 'holding' the product, 'wearing' it, or 'next to' them) and only call once they confirm. If the customer already uploaded a photo (via the chat's image icon), you can OMIT person_image_url — it will be used automatically. Otherwise require a public URL of the customer's photo and a product image URL from the catalog. For 'wearing', the product image is placed on the exact matching body part of the person.",
         parameters: {
           type: "object",
           properties: {
             person_image_url: {
               type: "string",
               description:
-                "HTTPS URL of the customer's photo (full body preferred). OPTIONAL if the customer already uploaded a photo in the chat.",
+                "HTTPS URL of the customer's photo. OPTIONAL if the customer already uploaded a photo in the chat. For 'wearing', a clear photo showing the relevant body part works best (e.g. a full-body photo for pants/dresses/shoes; an upper-body photo is fine for tops).",
             },
             product_image_url: {
               type: "string",
@@ -74,7 +74,7 @@ export function getTryonOpenAiTools() {
             },
             product_title: {
               type: "string",
-              description: "Optional product title for captions.",
+              description: "Product title — used to classify the body part for accurate try-on.",
             },
             placement: {
               type: "string",
@@ -82,9 +82,16 @@ export function getTryonOpenAiTools() {
               description:
                 "Where the product should appear relative to the person. 'wearing' for clothing/accessories, 'holding' for handheld items like snowboards, 'next_to' to place it beside them.",
             },
+            body_part: {
+              type: "string",
+              enum: ["head", "upper_body", "lower_body", "full_body", "arms", "legs", "foot"],
+              description:
+                "REQUIRED for 'wearing'. Classify which part of the body the product belongs to, using the product NAME as reference: shoes/sneakers/boots/sandals → foot; pants/jeans/shorts/skirt/leggings → lower_body; shirt/tee/top/jacket/sweater/hoodie/coat/vest → upper_body; dress/gown/jumpsuit/one-piece/swimsuit → full_body; hat/cap/beanie → head; gloves/mittens/arm warmers → arms; socks/tights/stockings → legs. When unsure, pick the most likely region and explain the reasoning to the customer.",
+            },
             prompt: {
               type: "string",
-              description: "Optional editing instruction override.",
+              description:
+                "Optional editing instruction override. Keep it consistent with the product's body part (e.g. for shoes: put them on the feet; for pants: wear them on the legs).",
             },
           },
           required: ["product_image_url"],

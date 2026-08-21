@@ -65,6 +65,11 @@ async function fetchNewestProductsAdmin(shopDomain) {
     if (!product) {
       // Fall back to the Admin data so we always have a product + price.
       product = toolService.formatProductData(item.raw, `/products/${item.raw.handle || ""}`);
+    } else {
+      // get_product_details only returns one ("selected") variant. Merge the
+      // full Admin variant list so the card can offer sizes/colors as buttons
+      // and check per-variant stock.
+      mergeAdminVariants(product, item.raw);
     }
 
     // Ensure a price is always present (storefront price preferred).
@@ -180,6 +185,30 @@ async function lookupProductViaStorefront(mcpClient, toolService, gid) {
     }
   }
   return null;
+}
+
+/**
+ * Merge the full Admin variant list into a product returned by the storefront
+ * MCP (which only exposes a single "selected or first available" variant).
+ * Only replaces the list when the Admin data has more variants, so cards can
+ * offer size/color buttons and check per-variant stock.
+ * @param {object} product - normalized product (from formatProductData)
+ * @param {object} raw - admin raw product (nodeToRawProduct output)
+ */
+function mergeAdminVariants(product, raw) {
+  if (!raw || !Array.isArray(raw.variants) || raw.variants.length === 0) return;
+  const current = Array.isArray(product.variants) ? product.variants : [];
+  if (raw.variants.length <= current.length) return;
+
+  product.variants = raw.variants.map((v) => ({
+    id: v.variant_id || v.id,
+    title: v.title || null,
+    available: v.available ?? null,
+    options: Array.isArray(v.options)
+      ? v.options.map((o) => ({ name: o.name, value: o.value ?? o.label }))
+      : [],
+  }));
+  product.variant_id = product.variants[0] ? product.variants[0].id : null;
 }
 
 /**

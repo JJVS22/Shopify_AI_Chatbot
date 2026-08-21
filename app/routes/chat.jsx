@@ -84,6 +84,12 @@ async function handleChatRequest(request) {
         userMessage,
         conversationId,
         promptType,
+        featuredProducts: Array.isArray(body.featured_products)
+          ? body.featured_products
+          : null,
+        pendingMessages: Array.isArray(body.pending_messages)
+          ? body.pending_messages
+          : null,
         stream
       });
     });
@@ -110,6 +116,8 @@ async function handleChatSession({
   userMessage,
   conversationId,
   promptType,
+  featuredProducts,
+  pendingMessages,
   stream
 }) {
   const deepseekService = createLlmProvider();
@@ -145,6 +153,44 @@ async function handleChatSession({
     }
 
     let productsToDisplay = [];
+
+    // Persist the initial "New products" cards at the very start of a brand-new
+    // conversation so they appear at the top when the history is restored in
+    // another tab. Skipped if the conversation already has messages (prevents
+    // duplicates when a restored tab keeps sending the cached cards).
+    if (featuredProducts && featuredProducts.length > 0) {
+      const existing = await getConversationHistory(conversationId);
+      if (!existing || existing.length === 0) {
+        try {
+          await saveMessage(conversationId, "product", JSON.stringify(featuredProducts));
+        } catch (err) {
+          console.warn("[Chat] Failed to persist featured products:", err.message);
+        }
+      }
+    }
+
+    // Persist client-generated messages that were queued before this
+    // conversation existed (e.g. an "added to cart" confirmation from the
+    // featured products). Deduplicated against existing history so a retry
+    // never double-persists.
+    if (pendingMessages && pendingMessages.length > 0) {
+      const existing = await getConversationHistory(conversationId);
+      for (const pm of pendingMessages) {
+        if (!pm || !pm.content) continue;
+        const role = pm.role === "product" ? "product" : "assistant";
+        const content = String(pm.content);
+        const alreadyStored = existing.some(
+          (m) => m.role === role && m.content === content
+        );
+        if (alreadyStored) continue;
+        try {
+          await saveMessage(conversationId, role, content);
+          existing.push({ role, content });
+        } catch (err) {
+          console.warn("[Chat] Failed to persist pending message:", err.message);
+        }
+      }
+    }
 
     await saveMessage(conversationId, 'user', userMessage);
 

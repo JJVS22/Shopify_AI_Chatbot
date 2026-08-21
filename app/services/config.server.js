@@ -18,7 +18,9 @@ export const AppConfig = {
 
   tools: {
     productSearchName: "search_catalog",
-    maxProductsToDisplay: 12,
+    // Default number of products shown as cards (and listed in the text
+    // response). The LLM prompt instructs it to stay in sync with this.
+    maxProductsToDisplay: 6,
   },
 
   providers: {
