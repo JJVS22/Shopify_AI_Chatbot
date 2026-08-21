@@ -40,7 +40,7 @@ export const AppConfig = {
   tryon: {
     resultsDir: process.env.TRYON_RESULTS_DIR || "storage/tryon-results",
     publicBasePath: "/api/tryon/results",
-    appUrl: (process.env.SHOPIFY_APP_URL || "https://ai-tryon.maxlochunhang.com/").replace(/\/$/, ""),
+    appUrl: (process.env.APP_URL || "https://localhost:3458").replace(/\/$/, ""),
   },
 };
 
