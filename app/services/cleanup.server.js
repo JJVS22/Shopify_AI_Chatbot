@@ -6,35 +6,6 @@ import {
 import { deleteTryonResultFile } from "./providers/storage.server";
 
 /**
- * Delete a single conversation and its try-on result files on disk. Used when a
- * customer clears the chat ("New chat") so their data does not linger server-side.
- * @param {string|string[]} conversationIds - one id or an array of ids
- * @returns {Promise<{deletedConversations: number, deletedFiles: number}>}
- */
-export async function clearConversations(conversationIds) {
-  const ids = Array.isArray(conversationIds) ? conversationIds : [conversationIds];
-  const cleanIds = ids.filter(Boolean);
-  if (cleanIds.length === 0) return { deletedConversations: 0, deletedFiles: 0 };
-
-  const filePaths = await getTryOnFilePathsForConversations(cleanIds);
-
-  for (const filePath of filePaths) {
-    try {
-      await deleteTryonResultFile(filePath);
-    } catch (err) {
-      console.error("[Cleanup] Failed to delete try-on file:", filePath, err.message);
-    }
-  }
-
-  const count = await deleteConversations(cleanIds);
-  console.log(
-    `[Cleanup] Cleared ${count} conversation(s) and ${filePaths.length} try-on file(s)`
-  );
-
-  return { deletedConversations: count, deletedFiles: filePaths.length };
-}
-
-/**
  * Delete conversations (and their messages, try-on result rows, and result
  * files on disk) that have had no activity for `maxAgeHours` hours.
  * @param {number} maxAgeHours
@@ -91,5 +62,4 @@ export function startCleanupScheduler({
 export default {
   runCleanup,
   startCleanupScheduler,
-  clearConversations,
 };
