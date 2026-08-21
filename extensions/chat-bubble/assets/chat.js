@@ -194,6 +194,7 @@
           chatBubble: container.querySelector('.shop-ai-chat-bubble'),
           chatWindow: container.querySelector('.shop-ai-chat-window'),
           closeButton: container.querySelector('.shop-ai-chat-close'),
+          clearButton: container.querySelector('.shop-ai-chat-clear'),
           resizeButton: container.querySelector('.shop-ai-chat-resize'),
           resizeGrip: container.querySelector('.shop-ai-chat-resize-grip'),
           attachButton: container.querySelector('.shop-ai-chat-attach'),
@@ -222,7 +223,7 @@
        * Set up all event listeners for UI interactions
        */
       setupEventListeners: function() {
-        const { closeButton, chatInput, sendButton, messagesContainer, resizeButton, attachButton, chatFile } = this.elements;
+        const { closeButton, clearButton, chatInput, sendButton, messagesContainer, resizeButton, attachButton, chatFile } = this.elements;
 
         // Bubble: drag to move (snaps left/right) OR click to toggle window
         this.enableBubbleDrag();
@@ -232,6 +233,11 @@
 
         // Close chat window
         closeButton.addEventListener('click', () => this.closeChatWindow());
+
+        // Clear chat history and restart the conversation from the beginning.
+        if (clearButton) {
+          clearButton.addEventListener('click', () => ShopAIChat.startNewChat());
+        }
 
         // Toggle chat window size (enlarge / shrink)
         if (resizeButton) {
@@ -2573,6 +2579,49 @@
         // references "featured products above"), then show the welcome message.
         this.API.loadInitialExperience(this.UI.elements.messagesContainer);
       }
+    },
+
+    /**
+     * Clear the current chat: delete the server-side conversation (best effort),
+     * wipe local state (conversation id, last message, pending messages, token
+     * polling), empty the on-screen messages, and reload the initial "new chat"
+     * experience (featured products + welcome message).
+     */
+    startNewChat: function() {
+      var messagesContainer = this.UI.elements && this.UI.elements.messagesContainer;
+
+      // Best-effort delete of the previous conversation on the server. We clear
+      // the UI immediately regardless of the outcome.
+      var oldConversationId = getConversationId();
+      if (oldConversationId) {
+        fetch(apiUrl('/chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ intent: 'clear', conversation_id: oldConversationId })
+        }).catch(function() { /* best effort */ });
+      }
+
+      // Reset all client-side state so the next session starts fresh.
+      removeConversationId();
+      removeLastMessage();
+      clearPendingMessages();
+      if (sessionStorage) {
+        try { sessionStorage.removeItem('shopAiTokenPollingId'); } catch (e) { /* ignore */ }
+      }
+      this.pendingFeaturedProducts = null;
+      if (this.TryOn && this.TryOn.state) {
+        this.TryOn.state.currentProduct = null;
+        this.TryOn.state.stagedFile = null;
+        this.TryOn.state.stagedPreview = null;
+      }
+
+      // Empty the on-screen message list (messages, product cards, tool UI).
+      if (messagesContainer) {
+        messagesContainer.innerHTML = '';
+      }
+
+      // Reload the brand-new experience (featured products + welcome message).
+      this.API.loadInitialExperience(messagesContainer);
     }
   };
 

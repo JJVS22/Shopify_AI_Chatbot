@@ -206,6 +206,21 @@
     opacity: 0.8;
   }
 
+  .shop-ai-chat-clear {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+  }
+
+  .shop-ai-chat-clear:hover {
+    opacity: 0.8;
+  }
+
   .shop-ai-chat-messages {
     flex: 1;
     padding: 16px;

@@ -20,6 +20,7 @@ import {
   isCustomTool,
 } from "../services/providers/custom/tools";
 import { findPairingProducts } from "../services/pairings.server";
+import { clearConversations } from "../services/cleanup.server";
 
 export async function loader({ request }) {
   if (request.method === "OPTIONS") {
@@ -43,7 +44,34 @@ export async function loader({ request }) {
 }
 
 export async function action({ request }) {
-  return handleChatRequest(request);
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: getCorsHeaders(request)
+    });
+  }
+
+  // Parse the body once, then reuse it for the clear intent check and the chat
+  // handler (a Request's body can only be read a single time).
+  let body = null;
+  try {
+    body = await request.json();
+  } catch (err) {
+    body = null;
+  }
+
+  if (body && body.intent === "clear") {
+    const conversationId = body.conversation_id;
+    if (conversationId) {
+      await clearConversations(conversationId);
+    }
+    return new Response(
+      JSON.stringify({ ok: true }),
+      { headers: getCorsHeaders(request) }
+    );
+  }
+
+  return handleChatRequest(request, body);
 }
 
 /**
@@ -56,10 +84,14 @@ async function handleHistoryRequest(request, conversationId) {
 
 /**
  * Parse the incoming chat request and wrap a single chat session in an SSE stream.
+ * @param {Request} request
+ * @param {Object|null} [body] - the already-parsed JSON body (avoids re-reading).
  */
-async function handleChatRequest(request) {
+async function handleChatRequest(request, body = null) {
   try {
-    const body = await request.json();
+    if (!body) {
+      body = await request.json();
+    }
     const userMessage = body.message;
 
     if (!userMessage) {
