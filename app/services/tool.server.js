@@ -2,6 +2,25 @@ import { saveMessage } from "../db.server";
 import AppConfig from "./config.server";
 
 /**
+ * Derive a Shopify-style handle (URL slug) from a product title.
+ * Matches Shopify's default handle generation closely enough for a fallback:
+ * lowercase, `&` → "and", spaces/punctuation → "-", collapsed and trimmed.
+ * @param {string} title
+ * @returns {string}
+ */
+function slugifyTitle(title) {
+  if (!title) return "";
+  return String(title)
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, " and ")
+    .replace(/[''"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
  * Create a tool service that handles MCP tool results: success/error handling,
  * product search result parsing, and persisting tool messages to history.
  */
@@ -169,16 +188,16 @@ export function createToolService() {
     const direct = extractProductUrl(product);
     if (direct && /^https?:\/\//i.test(direct)) return direct;
     if (product.handle) return `/products/${product.handle}`;
-    if (direct && direct.startsWith('/products/')) {
-      return direct; // handle-based or numeric-id path (both are valid Shopify links)
+    if (direct && direct.startsWith('/products/') && !/\/products\/\d+$/.test(direct)) {
+      return direct; // handle-based path (not a numeric-id fallback)
     }
 
     const gid = product.id || product.product_id;
-    if (!gid) return '';
+    if (gid && urlCache.has(gid)) return urlCache.get(gid);
 
-    if (urlCache.has(gid)) return urlCache.get(gid);
+    let resolved = '';
 
-    let resolved = direct || '';
+    // Try one cached get_product_details lookup to get the real handle/URL.
     if (mcpClient) {
       try {
         const res = await mcpClient.callTool('get_product_details', { product_id: gid });
@@ -188,7 +207,7 @@ export function createToolService() {
           if (typeof text === 'string') {
             const trimmed = text.trim();
             if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-              obj = JSON.parse(trimmed);
+              try { obj = JSON.parse(trimmed); } catch { obj = null; }
             } else {
               console.warn('[Tool] get_product_details non-JSON response:', trimmed.slice(0, 200));
               obj = null;
@@ -207,7 +226,14 @@ export function createToolService() {
       }
     }
 
-    urlCache.set(gid, resolved);
+    // Fallback: build the handle from the title (Shopify's default slug) so the
+    // link resolves to the product page instead of a numeric-id path that 404s.
+    if (!resolved) {
+      const slug = slugifyTitle(product.title);
+      if (slug) resolved = `/products/${slug}`;
+    }
+
+    if (gid && resolved) urlCache.set(gid, resolved);
     return resolved;
   };
 

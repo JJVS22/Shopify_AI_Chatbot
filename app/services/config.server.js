@@ -1,6 +1,6 @@
 export const AppConfig = {
   api: {
-    defaultModel: "mimo-v2.5",
+    defaultModel: "deepseek-v4-flash",
     maxTokens: 512,
     defaultPromptType: "standardAssistant",
   },
