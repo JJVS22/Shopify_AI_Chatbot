@@ -1,6 +1,6 @@
 export const AppConfig = {
   api: {
-    defaultModel: "deepseek-chat",
+    defaultModel: "deepseek-v4-flash",
     maxTokens: 512,
     defaultPromptType: "standardAssistant",
   },

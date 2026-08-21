@@ -59,7 +59,7 @@ export function getTryonOpenAiTools() {
       function: {
         name: "tryon_2d",
         description:
-          "Run a 2D virtual try-on: compose a store product with a person photo. IMPORTANT: before calling this tool, confirm the desired placement with the customer (e.g. 'holding' the product, 'wearing' it, or 'next to' them) and only call once they confirm. If the customer already uploaded a photo (via the chat's image icon), you can OMIT person_image_url — it will be used automatically. Otherwise require a public URL of the customer's photo and a product image URL from the catalog. For 'wearing', the product image is placed on the exact matching body part of the person.",
+          "Run a 2D virtual try-on: compose a store product with a person photo. IMPORTANT: before calling this tool, confirm the desired placement with the customer (e.g. 'holding' the product, 'wearing' it, or 'next to' them) and only call once they confirm. If the customer already uploaded a photo (via the chat's image icon), you can OMIT person_image_url — it will be used automatically. Otherwise require a public URL of the customer's photo and a product image URL from the catalog. For 'wearing', the product image is placed on the exact matching body part of the person. For bags/accessories (tote, handbag, backpack, purse) and sports gear (snowboard), the correct placement is 'holding' — never 'wearing'.",
         parameters: {
           type: "object",
           properties: {
@@ -74,27 +74,28 @@ export function getTryonOpenAiTools() {
             },
             product_title: {
               type: "string",
-              description: "Product title — used to classify the body part for accurate try-on.",
+              description:
+                "Product title — REQUIRED so the image-edit model knows what the item is. Used to classify the body part / placement for an accurate try-on (e.g. 'Tote Bag' is carried, not worn).",
             },
             placement: {
               type: "string",
               enum: ["wearing", "holding", "next_to"],
               description:
-                "Where the product should appear relative to the person. 'wearing' for clothing/accessories, 'holding' for handheld items like snowboards, 'next_to' to place it beside them.",
+                "Where the product should appear relative to the person. 'wearing' for clothing (tops, pants, shorts, shoes, hats), 'holding' for handheld/carried items (bags, totes, backpacks, snowboards), 'next_to' to place it beside them.",
             },
             body_part: {
               type: "string",
-              enum: ["head", "upper_body", "lower_body", "full_body", "arms", "legs", "foot"],
+              enum: ["head", "upper_body", "lower_body", "full_body", "arms", "legs", "foot", "hand_carried"],
               description:
-                "REQUIRED for 'wearing'. Classify which part of the body the product belongs to, using the product NAME as reference: shoes/sneakers/boots/sandals → foot; pants/jeans/shorts/skirt/leggings → lower_body; shirt/tee/top/jacket/sweater/hoodie/coat/vest → upper_body; dress/gown/jumpsuit/one-piece/swimsuit → full_body; hat/cap/beanie → head; gloves/mittens/arm warmers → arms; socks/tights/stockings → legs. When unsure, pick the most likely region and explain the reasoning to the customer.",
+                "REQUIRED for 'wearing'. Classify which part of the body the product belongs to, using the product NAME as reference: shoes/sneakers/boots/sandals → foot; pants/jeans/shorts/skirt/leggings → lower_body; shirt/tee/top/jacket/sweater/hoodie/coat/vest → upper_body; dress/gown/jumpsuit/one-piece/swimsuit → full_body; hat/cap/beanie → head; gloves/mittens/arm warmers → arms; socks/tights/stockings → legs; bags/totes/backpacks/purses/snowboards/sports gear → hand_carried (use placement 'holding' for these, not 'wearing'). When unsure, pick the most likely region and explain the reasoning to the customer.",
             },
             prompt: {
               type: "string",
               description:
-                "Optional editing instruction override. Keep it consistent with the product's body part (e.g. for shoes: put them on the feet; for pants: wear them on the legs).",
+                "Optional editing instruction override. Keep it consistent with the product's body part (e.g. for shoes: put them on the feet; for pants: wear them on the legs; for a bag: hold/carry it in the hand — it is not clothing).",
             },
           },
-          required: ["product_image_url"],
+          required: ["product_image_url", "product_title"],
         },
       },
     },

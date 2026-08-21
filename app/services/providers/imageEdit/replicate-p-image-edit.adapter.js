@@ -13,9 +13,9 @@ import { saveTryonResult } from "../storage.server";
  */
 const PLACEMENT_PROMPTS = {
   holding:
-    "Image 1 is a person; image 2 is the product. Extract ONLY the single product from image 2, ignoring the background, any model, mannequin, or other objects in that image. Show the person in image 1 holding that product naturally in their hands, as if they are holding it. Keep the person's identity, face, pose, and background unchanged. Realistic lighting and shadows.",
+    "Image 1 is a person; image 2 is the product/object to be HELD or CARRIED (e.g. a bag, tote, handbag, backpack, or sports equipment) — it is NOT clothing and must NOT be worn over the torso, chest, or as a vest. Extract ONLY the single product from image 2, ignoring the background, any model, mannequin, or other objects. Show the person in image 1 holding or carrying that product naturally in their hands or over one shoulder, following their existing pose and stance. Keep the person's identity, face, pose, and background unchanged. Realistic lighting, shadows, and scale.",
   wearing:
-    "Image 1 is a person; image 2 is the garment/product. STEP 1: detect the person in image 1 and locate their body parts (head, face, shoulders, chest, waist, arms, hands, legs, knees, feet). STEP 2: identify the single garment in image 2 (ignore its background, any model/mannequin, and any other objects). Dress the person in image 1 with that garment, placing it on the matching body part of the person (a top/torso on the chest and upper body, pants on the waist and legs, shoes on the feet) and following the person's natural pose. Do NOT add any extra clothing, accessories, or items that are not in image 2. Keep the person's face, body shape, pose, and background unchanged. Keep the garment's design, color, pattern, and logo exactly as in image 2. Realistic fabric fit, draping, and lighting.",
+    "Image 1 is a person; image 2 is the garment/product. STEP 1: detect the person in image 1 and locate their body parts (head, face, shoulders, chest, waist, arms, hands, legs, knees, feet). STEP 2: identify the single garment in image 2 (ignore its background, any mannequin, and any other objects/person behind). Dress the person in image 1 with that garment, placing it on the matching body part of the person (a top/torso on the chest and upper body, pants on the waist and legs, shoes on the feet) and following the person's natural pose. Do NOT add any extra clothing, accessories, or items that are not in image 2. Keep the person's face, body shape, pose, and background unchanged. Keep the garment's design, color, pattern, and logo exactly as in image 2. Realistic fabric fit, draping, and lighting.",
   pairing:
     "Complete the outfit in image 1 by ADDING the product from image 2. Image 1 is an edited photo of a person who is already wearing another item — KEEP every existing clothing, accessory, and item already present in image 1 exactly as it is. Do NOT remove, replace, cover, or alter anything already worn. Extract ONLY the product from image 2 (ignore its background, model, or mannequin) and add it naturally alongside the existing items (e.g. add a top to existing pants, layer a jacket over an existing outfit, or add a bag/shoes to an existing look). Place it on the appropriate body part of the person. Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.",
   next_to:
@@ -47,11 +47,20 @@ export function createPImageEditAdapter() {
 
     const replicate = getReplicateClient();
 
-    const defaultPrompt =
+    // Always tell the image-edit model what the product actually is by name.
+    // This is the key fix for items the model tends to misplace (e.g. a tote
+    // bag read as clothing). The region-aware prompts built in tryon.server
+    // already embed the title, so we only prepend it when it's missing.
+    const productTitle = options.productTitle;
+    const basePrompt =
       prompt ||
       PLACEMENT_PROMPTS[placement] ||
       PLACEMENT_PROMPTS.wearing ||
       FALLBACK_PROMPT;
+    const defaultPrompt =
+      productTitle && basePrompt && !basePrompt.includes(productTitle)
+        ? `Image 2 shows the product: ${productTitle}. ${basePrompt}`
+        : basePrompt;
 
     // Replicate cannot fetch data: URLs — convert to Blobs so the SDK uploads them.
     const personInput = toReplicateFile(personImage);
@@ -121,6 +130,7 @@ export function createPImageEditAdapter() {
       model,
       placement: placement || "wearing",
       prompt: defaultPrompt,
+      productTitle: productTitle || null,
       personImage: typeof personImage === "string" ? personImage.slice(0, 200) : "[upload]",
       productImage: typeof productImage === "string" ? productImage : "[upload]",
       replicateOutputSummary: summarizeOutput(output),

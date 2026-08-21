@@ -3,8 +3,8 @@ import AppConfig from "./config.server";
 import systemPrompts from "../prompts/prompts.json";
 
 const deepseekClient = new OpenAI({
-  baseURL: process.env.DEEPSEEK_API_BASE_URL || "https://api.deepseek.com/v1",
-  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: process.env.OPENCODE_GO_BASE_URL || "https://api.deepseek.com/v1",
+  apiKey: process.env.OPENCODE_GO_API_KEY,
 });
 
 /**

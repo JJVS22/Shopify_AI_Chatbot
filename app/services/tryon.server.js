@@ -34,23 +34,48 @@ export async function run2dTryon({
 }) {
   const provider = createImageEditProvider();
 
+  // Server-side body-region classification of the product NAME. This is the
+  // safety net that tells the image-edit model what the item actually is, even
+  // when the LLM mislabels the placement or body part (e.g. a tote bag reported
+  // as "wearing").
+  const autoRegion = classifyBodyRegion(productTitle);
+
   // When pairing a second item onto an already-edited photo, build a prompt that
   // names both items and instructs natural layering so the first item is kept.
   let effectivePrompt = prompt;
+  let effectivePlacement = placement;
   if (placement === "pairing" && originalProductTitle && productTitle) {
     effectivePrompt = buildPairingPrompt(originalProductTitle, productTitle);
+  } else if (autoRegion === "hand_carried") {
+    // Bags / backpacks / purses / sports gear are HELD or CARRIED, never worn
+    // like a garment. Force "holding" even if the LLM chose "wearing" so the
+    // model does not drape the bag over the torso like a vest or replace the
+    // person with it.
+    effectivePlacement = "holding";
+    effectivePrompt = buildHoldingPrompt(productTitle, prompt, true);
   } else if (!placement || placement === "wearing") {
     // Region-aware prompt: classify the product's body part (upper body / lower
     // body / full body / head / arms / legs / foot) from its name and tell the
     // model exactly where to put it — while keeping the person fully in frame.
-    effectivePrompt = buildWearingPrompt(productTitle, bodyPart, prompt);
+    effectivePrompt = buildWearingPrompt(
+      productTitle,
+      bodyPart || autoRegion,
+      prompt
+    );
+  } else if (placement === "holding") {
+    // LLM already chose "holding" — still name the product so the model knows
+    // exactly what is being held.
+    effectivePrompt = buildHoldingPrompt(productTitle, prompt, false);
   }
+  // placement === "next_to" (or anything else) keeps the LLM prompt or falls
+  // back to the provider's default; the product name is still injected there.
 
   const result = await provider.editImage({
     personImage,
     productImage,
     prompt: effectivePrompt,
-    placement,
+    placement: effectivePlacement || placement,
+    options: { productTitle },
   });
 
   if (conversationId && result.relativePath) {
@@ -63,7 +88,7 @@ export async function run2dTryon({
         filePath: result.relativePath,
         publicUrl: result.publicUrl || result.imageUrl,
         productTitle: productTitle || null,
-        placement: placement || null,
+        placement: effectivePlacement || null,
         provider: result.provider,
         model: result.model,
       });
@@ -76,7 +101,7 @@ export async function run2dTryon({
     ...result,
     absoluteImageUrl: toAbsoluteUrl(result.imageUrl),
     productTitle: productTitle || null,
-    placement: placement || null,
+    placement: effectivePlacement || null,
     message: `2D try-on complete${productTitle ? ` for ${productTitle}` : ""}.`,
   };
 }
@@ -262,24 +287,28 @@ const BODY_REGION_PHRASES = [
   { region: "head", words: ["baseball cap", "sun hat", "bucket hat", "beanie", "earmuff", "fedora"] },
   { region: "legs", words: ["knee high", "knee-high", "thigh high", "thigh-high", "leg warmer", "legwarmer", "ankle sock", "crew sock", "knee sock"] },
   { region: "arms", words: ["arm warmer", "armwarmer", "wrist band", "wristband", "elbow pad", "arm sleeve", "fingerless glove", "glove"] },
+  { region: "hand_carried", words: ["tote bag", "hand bag", "shoulder bag", "cross body bag", "crossbody bag", "messenger bag", "duffel bag", "duffle bag", "gym bag", "laptop bag", "bum bag", "fanny pack", "waist bag", "waist pack", "belt bag", "snow skis", "ski poles", "tennis racket", "badminton racket", "baseball bat", "cricket bat", "skate board"] },
 ];
 
 const BODY_REGION_WORDS = {
-  head: ["hat", "cap", "beanie", "beret", "headband", "headpiece", "headdress", "crown", "bandana", "bandanna", "helmet", "visor", "sunglasses", "glasses", "tiara", "headscarf", "hairband", "hair clip", "hairpin"],
+  head: ["hat", "cap", "beanie", "beret", "headband", "headpiece", "headdress", "crown", "bandana", "bandanna", "helmet", "visor", "sunglasses", "glasses", "goggles", "tiara", "headscarf", "hairband", "hair clip", "hairpin"],
   arms: ["gloves", "mitten", "mittens", "wristband", "armwarmer"],
   foot: ["shoes", "sneaker", "sneakers", "trainers", "trainer", "boots", "boot", "sandals", "sandal", "slippers", "slipper", "heels", "heel", "pumps", "pump", "loafers", "loafer", "mules", "mule", "clogs", "clog", "footwear", "cleats", "cleat", "yeezy"],
   legs: ["socks", "sock", "tights", "stocking", "stockings", "hose", "garter", "knee pad", "kneepad"],
   lower_body: ["pants", "pant", "trousers", "trouser", "jeans", "jean", "shorts", "short", "skirt", "leggings", "legging", "joggers", "jogger", "sweatpants", "sweatpants", "culottes", "culotte", "briefs", "brief", "boxers", "boxer", "underwear", "trunks", "trunk", "skort", "dungarees", "dungaree", "bottoms", "waist"],
   upper_body: ["shirt", "tee", "tops", "top", "tank", "blouse", "polo", "henley", "sweater", "sweatshirt", "hoodie", "jacket", "coat", "blazer", "cardigan", "vest", "parka", "puffer", "windbreaker", "jersey", "jumper", "pullover", "camisole", "kimono", "gilet", "waistcoat", "tunic", "singlet", "bra", "tuxedo", "tux", "chest", "torso", "bodice"],
   full_body: ["dress", "gown", "romper", "jumpsuit", "overall", "overalls", "coverall", "onesie", "swimsuit", "swimwear", "tracksuit", "suit", "costume", "outfit", "uniform", "playsuit"],
+  hand_carried: [" bag", "tote", "handbag", "backpack", "back pack", "satchel", "purse", "clutch", "briefcase", "luggage", "suitcase", "duffel", "duffle", "carryall", "holdall", "snowboard", "surfboard", "skateboard", "crossbody", "cross-body", "skis", "racket", "racquet", "basketball", "football", "soccer ball", "volleyball", "baseball", "cricket", "skipping rope"],
 };
 
 /**
  * Classify which body region a product belongs to based on its name/type.
  * Multi-word phrases are matched first (more specific), then single words.
+ * Garment regions win over `hand_carried` so words shared with clothing names
+ * (e.g. "baggy jeans") are never misread as a bag.
  * @param {string} productTitle
  * @returns {string|null} one of: head, upper_body, lower_body, full_body,
- *   arms, legs, foot — or null when nothing matches.
+ *   arms, legs, foot, hand_carried — or null when nothing matches.
  */
 function classifyBodyRegion(productTitle) {
   const title = String(productTitle || "").toLowerCase();
@@ -292,7 +321,13 @@ function classifyBodyRegion(productTitle) {
   }
   for (const region of Object.keys(BODY_REGION_WORDS)) {
     for (const w of BODY_REGION_WORDS[region]) {
-      if (title.includes(w)) return region;
+      if (title.includes(w)) {
+        // "bag" should not fire on words like "baggy" / "baguette".
+        if (region === "hand_carried" && w === " bag" && /baggy|baggie|baguette/.test(title)) {
+          continue;
+        }
+        return region;
+      }
     }
   }
   return null;
@@ -315,6 +350,16 @@ const KEEP_PERSON_IN_FRAME =
 const KEEP_GARMENT =
   "Keep the product's design, color, pattern, logo, and details exactly as shown in image 2 — do NOT redesign, recolor, or replace it. ";
 
+// Tells the model to swap out whatever the person is already wearing in that
+// area for the product — this is what fixes items like shorts where the model
+// would otherwise leave the person in their original pants/shorts.
+const REPLACE_EXISTING_UPPER =
+  "REPLACE the person's current upper-body clothing (whatever shirt, t-shirt, top, jacket, sweater, hoodie, or vest they are currently wearing) with THIS product — the person must be shown wearing the new garment from image 2, not their old one. ";
+const REPLACE_EXISTING_LOWER =
+  "REPLACE the person's current lower-body clothing (whatever pants, trousers, jeans, shorts, skirt, or leggings they are currently wearing) with THIS product — the person must be shown wearing the new garment from image 2, NOT their old one. Even if the current clothing looks similar to the product, it must be swapped for the product. ";
+const REPLACE_EXISTING_FULL =
+  "REPLACE the person's current outfit with THIS product — the person must be shown wearing the new garment from image 2, NOT their old clothes. ";
+
 const REGION_PROMPTS = {
   head:
     BODY_DETECTION +
@@ -325,6 +370,7 @@ const REGION_PROMPTS = {
   upper_body:
     BODY_DETECTION +
     "The product is an UPPER-BODY garment (e.g. shirt, t-shirt, jacket, sweater, hoodie). " +
+    REPLACE_EXISTING_UPPER +
     "Dress the person with it so it covers the CHEST and torso, the sleeves go onto the arms, and the hem ends at the WAIST — it must NOT extend below the hips or cover the legs. " +
     KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
     "Realistic fit, draping, lighting, and shadows.",
@@ -337,7 +383,8 @@ const REGION_PROMPTS = {
   lower_body:
     BODY_DETECTION +
     "The product is a LOWER-BODY garment (e.g. pants, jeans, shorts, skirt, leggings). " +
-    "Dress the person with it so it starts at the WAIST and covers the hips and LEGS — it must NOT cover the chest or upper body. " +
+    REPLACE_EXISTING_LOWER +
+    "It must start at the WAIST and cover the hips and LEGS — it must NOT cover the chest or upper body. " +
     KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
     "Realistic fit, draping, lighting, and shadows.",
   legs:
@@ -355,9 +402,17 @@ const REGION_PROMPTS = {
   full_body:
     BODY_DETECTION +
     "The product is a FULL-BODY garment (e.g. dress, gown, jumpsuit, one-piece, romper). " +
+    REPLACE_EXISTING_FULL +
     "Dress the person in it so it covers the CHEST/torso and extends down over the WAIST to the LEGS as one piece. " +
     KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
     "Realistic fit, draping, lighting, and shadows.",
+  hand_carried:
+    BODY_DETECTION +
+    "The product is an ACCESSORY the person CARRIES or HOLDS — e.g. a bag, tote, handbag, backpack, purse, or sports equipment (like a snowboard). " +
+    "It is NOT clothing: it must NEVER be worn over the chest/torso like a garment or a vest, and it must NEVER replace the person, their clothes, or their body. " +
+    "Show the person in image 1 holding the product in one or both hands, or carrying it over one shoulder, following their natural pose and stance. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic scale, materials, lighting, and shadows.",
 };
 
 const GENERIC_WEARING_PROMPT =
@@ -384,6 +439,37 @@ function buildWearingPrompt(productTitle, bodyPart, customPrompt) {
     : `Image 1 is a person; image 2 is the product to be worn. `;
   const custom = customPrompt ? ` Additional instruction from the assistant: ${customPrompt}` : "";
   return titleIntro + regionPrompt + custom;
+}
+
+/**
+ * Build a prompt for items that are HELD or CARRIED (bags, accessories, sports
+ * gear, etc.). The product name is always included so the image-edit model
+ * knows exactly what it is. When `forceCarry` is true the model is explicitly
+ * told the item is NOT clothing and must never be worn on the body — this
+ * prevents a tote bag being draped over the torso like a vest or replacing the
+ * person entirely.
+ * @param {string|null} productTitle
+ * @param {string|null} customPrompt - optional LLM-provided override
+ * @param {boolean} forceCarry - emphasize the item is not clothing
+ * @returns {string}
+ */
+function buildHoldingPrompt(productTitle, customPrompt, forceCarry) {
+  const intro = productTitle
+    ? `Image 1 is a person; image 2 is the item to be held/carried (${productTitle}). `
+    : `Image 1 is a person; image 2 is the item to be held/carried. `;
+  const notClothing = forceCarry
+    ? "The item in image 2 is NOT a piece of clothing — it is an accessory or object the person holds or carries (e.g. a bag, tote, handbag, backpack, or sports equipment). It must NEVER be worn over the torso, chest, or shoulders like a garment or a vest, and it must NEVER replace the person or their clothes. "
+    : "";
+  const custom = customPrompt ? ` Additional instruction from the assistant: ${customPrompt}` : "";
+  return (
+    intro +
+    "Extract ONLY the item from image 2, ignoring its background, any model, mannequin, or other objects. " +
+    notClothing +
+    "Show the person in image 1 holding the item naturally in one or both hands, or carrying it over one shoulder, following their existing pose and stance. " +
+    KEEP_PERSON_IN_FRAME + KEEP_GARMENT +
+    "Realistic scale, materials, lighting, and shadows." +
+    custom
+  );
 }
 
 /**
@@ -416,6 +502,17 @@ function buildPairingPrompt(originalTitle, addedTitle) {
     `Now add the ${addedTitle} from image 2 so the person is wearing BOTH items together at the same time. ` +
     `KEEP the ${originalTitle} exactly as it is — do NOT remove, replace, cover, or hide it. ` +
     `Keep the person's face, pose, and background unchanged. Realistic fabric fit, lighting, and shadows.`;
+
+  // When the added item is a bag / accessory / handheld object, don't try to
+  // layer it like a garment — tell the model to hold or carry it instead.
+  if (classifyBodyRegion(addedTitle) === "hand_carried") {
+    return (
+      base +
+      ` The ${addedTitle} is an accessory/object, NOT clothing — do NOT wear it over the body. ` +
+      `Show the person holding or carrying the ${addedTitle} in their hand or over one shoulder, ` +
+      `next to the existing look, keeping the ${originalTitle} unchanged.`
+    );
+  }
 
   if (order === "under") {
     return (
